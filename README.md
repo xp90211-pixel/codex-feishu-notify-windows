@@ -50,7 +50,7 @@ flowchart LR
 - Windows 10/11。
 - Codex 支持用户级 `notify` 与生命周期 Hooks；新安装后需重新开启 Codex 才能完整加载 Hook。
 - PowerShell 7 优先；缺失时安装器回退到 Windows PowerShell。
-- `lark-cli` 已安装，并准备好可代表机器人发送消息的本地配置。
+- `lark-cli` 已安装，并准备好可代表机器人发送消息的本地配置。（可以参考别人的项目https://github.com/zarazhangrui/lark-coding-agent-bridge/blob/main/README.zh.md）
 - 已知目标会话 ID，例如 `oc_xxx`。不要把真实 ID 提交到 Git。
 
 当前实现已按本机 `lark-cli 1.0.76` 的 `im +messages-send` 命令验证。其他版本应先运行诊断和 dry run。
