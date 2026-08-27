@@ -1,13 +1,44 @@
 # Codex Feishu Notify for Windows
 
-一个带有直观调节UI的转发器。把 Codex 的真实用户任务完成事件可靠地转发到飞书Cli接口，同时保留 Windows 端自己的通知模式。应用场景为：只有特定PC可以安装Codex，且外部重连延迟严重的场景，方便查看codex运行进度。
-<img width="962" height="760" alt="image" src="https://github.com/user-attachments/assets/a77f68ba-7d7f-4155-99fe-577b5bf6b494" />
-<img width="924" height="397" alt="image" src="https://github.com/user-attachments/assets/461b2089-39f6-479e-8aa2-da336ea9e6d1" />
-<img width="902" height="561" alt="image" src="https://github.com/user-attachments/assets/3ced3d2e-cd9f-40c6-ab31-48cc478e0de9" />
+[![Latest release](https://img.shields.io/github/v/release/xp90211-pixel/codex-feishu-notify-windows?display_name=tag&sort=semver)](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest)
+[![PowerShell checks](https://github.com/xp90211-pixel/codex-feishu-notify-windows/actions/workflows/powershell.yml/badge.svg)](https://github.com/xp90211-pixel/codex-feishu-notify-windows/actions/workflows/powershell.yml)
+[![Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4)](#前置条件)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
+一个面向 Windows 的 Codex 通知桥接与图形化管理工具：捕捉真实的任务完成和等待授权事件，通过本地已认证的 `lark-cli` 发送到飞书，同时提供独立的 Windows Toast、运行计划、节假日和手动启停控制。
 
+适合 Codex 只能运行在某台固定 PC、远程重连延迟较高，希望从飞书查看任务进度的场景。
 
-这是一个非官方社区项目，与 OpenAI、飞书或 Lark 均无隶属关系。当前版本仅支持 Windows 与已认证的 `lark-cli` 配置。
+> [!IMPORTANT]
+> 设置器中的“PC 通知”是本项目生成的 Windows Toast，Windows 可能把发送方显示为“Windows PowerShell”；它不是 Codex 桌面端自带通知。PC Toast、飞书通知和 Codex 自带通知是三套相互独立的状态。
+
+> [!NOTE]
+> 当前项目只做本机到飞书的单向通知，不从飞书执行审批、按钮回调、终端输入或任意远程命令；相关取舍见[远程审批与终端输入评估](docs/remote-control-evaluation.md)。
+
+这是一个非官方社区项目，与 OpenAI、飞书或 Lark 均无隶属关系。当前仅支持 Windows 10/11 与已认证的 `lark-cli` 配置。
+
+## 当前稳定版
+
+| 版本 | 推荐下载 | 校验文件 | 便携包 |
+|---|---|---|---|
+| [`v0.5.0`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.5.0) | [`setup.exe`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.5.0/codex-feishu-notify-windows-v0.5.0-setup.exe) | [`setup.exe.sha256`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.5.0/codex-feishu-notify-windows-v0.5.0-setup.exe.sha256) | [`ZIP`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.5.0/codex-feishu-notify-windows-v0.5.0.zip) |
+
+后续版本请以 [Releases / Latest](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 为准。Release 同时提供 setup EXE、便携 ZIP 和各自的 SHA-256 文件。
+
+## 快速开始
+
+1. 确认满足[前置条件](#前置条件)，尤其是已有可用的 `lark-cli` profile 和目标飞书会话 ID。
+2. 从上表下载 setup EXE 与对应 `.sha256`，核对哈希后双击运行。
+3. 在自动打开的图形设置器中检查连接与计划，点击“安装通知”并确认。
+4. 重新打开 Codex，在 Hook 管理界面审查、信任并启用新安装或变化的 Hook。
+
+详细过程、安全边界和 SmartScreen 说明见[一键安装](#一键安装推荐)。
+
+## 界面预览
+
+<img width="962" height="760" alt="Codex 飞书通知图形设置器" src="https://github.com/user-attachments/assets/a77f68ba-7d7f-4155-99fe-577b5bf6b494" />
+<img width="924" height="397" alt="Codex 飞书通知运行计划设置" src="https://github.com/user-attachments/assets/461b2089-39f6-479e-8aa2-da336ea9e6d1" />
+<img width="902" height="561" alt="Codex 飞书通知状态检查" src="https://github.com/user-attachments/assets/3ced3d2e-cd9f-40c6-ab31-48cc478e0de9" />
 
 ## 解决什么问题
 
@@ -74,40 +105,49 @@ flowchart LR
 
 ## 一键安装（推荐）
 
-1. 打开 [Releases](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest)，下载最新版的 `codex-feishu-notify-windows-vX.Y.Z-setup.exe` 和同名 `.sha256` 文件。
-2. 在 PowerShell 中核对安装器哈希：
+1. 先完成上面的飞书连接器、`lark-cli` profile 和目标会话 ID 准备。
+2. 从 [v0.5.0 Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.5.0) 下载 `codex-feishu-notify-windows-v0.5.0-setup.exe` 和同名 `.sha256` 文件；更新版本请改用 [Latest Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 中对应的两个文件。
+3. 在 PowerShell 中核对安装器哈希：
 
    ```powershell
-   (Get-FileHash .\codex-feishu-notify-windows-vX.Y.Z-setup.exe -Algorithm SHA256).Hash
-   Get-Content .\codex-feishu-notify-windows-vX.Y.Z-setup.exe.sha256
+   (Get-FileHash .\codex-feishu-notify-windows-v0.5.0-setup.exe -Algorithm SHA256).Hash
+   Get-Content .\codex-feishu-notify-windows-v0.5.0-setup.exe.sha256
    ```
 
-3. 两边哈希一致后双击安装器。它不要求管理员权限，会把管理程序安装到 `%LOCALAPPDATA%\Programs\CodexFeishuNotify\vX.Y.Z`，创建开始菜单快捷方式并自动打开“Codex 飞书通知设置”。
-4. 在图形设置器中填写飞书会话 ID，核对自动找到的 `lark-cli` 与 profile，设置运行计划，然后点击“安装通知”并确认变更。
-5. 安装完成后重新打开 Codex，在 Hook 管理界面审查、信任并启用本项目安装或更新的 Hook。
+4. 两边哈希一致后双击安装器。它不要求管理员权限，会把管理程序安装到 `%LOCALAPPDATA%\Programs\CodexFeishuNotify\v0.5.0`，创建开始菜单快捷方式并自动打开“Codex 飞书通知设置”。
+5. 在图形设置器中填写飞书会话 ID，核对自动找到的 `lark-cli` 与 profile，设置运行计划，然后点击“安装通知”并确认变更。
+6. 安装完成后重新打开 Codex，在 Hook 管理界面审查、信任并启用本项目安装或更新的 Hook。
 
 这个 EXE 是“一键打开安装向导”，不会静默创建飞书应用、代替用户扫码授权、开放其他用户访问、写入真实会话 ID，或绕过 Codex 的 Hook 信任步骤。重复运行同一版本会安全替换该版本的管理程序文件，不会直接覆盖已经生效的私有通知配置。
 
 当前 Release 安装器尚未使用商业代码签名证书，Windows SmartScreen 可能显示“未知发布者”。只有在下载地址确认为本仓库且 SHA-256 与 Release 附件一致时才应继续；不愿运行未签名 EXE 时，请改用下方命令行安装或 Release ZIP。
+
+一键安装包含两个明确分开的阶段：
+
+| 阶段 | 实际操作 | 是否改动 Codex / 飞书配置 |
+|---|---|---|
+| 双击 setup EXE | 安装版本化的管理程序、创建开始菜单快捷方式、打开设置器 | 否 |
+| 点击“安装通知”并确认 | 备份并部署运行脚本、合并 Codex 配置与 Hook、注册计划任务 | 是 |
 
 ## 命令行安装
 
 在 PowerShell 中执行：
 
 ```powershell
-git clone https://github.com/YOUR_NAME/codex-feishu-notify-windows.git
+git clone https://github.com/xp90211-pixel/codex-feishu-notify-windows.git
 Set-Location .\codex-feishu-notify-windows
 
 pwsh -File .\tests\Test-Project.ps1
 
 pwsh -File .\scripts\Install.ps1 `
   -ChatId 'oc_REPLACE_WITH_YOURS' `
+  -TaskName 'Codex.LarkNotify.codex' `
   -LarkChannelProfile 'codex' `
   -ScheduleStart '18:40' `
   -ScheduleEnd '02:00' `
   -HolidayRegion 'Auto'
 
-pwsh -File .\scripts\Test-Configuration.ps1
+pwsh -File .\scripts\Test-Configuration.ps1 -TaskName 'Codex.LarkNotify.codex'
 ```
 
 安装器会：
@@ -117,27 +157,34 @@ pwsh -File .\scripts\Test-Configuration.ps1
 3. 备份并安全更新用户级 `.codex\config.toml`；
 4. 合并并备份用户级 `.codex\hooks.json`，保留其中不属于本项目的 Hook；
 5. 尝试保留或串联已有 `notify` 命令，并保存升级前运行文件快照；
-6. 注册隐藏的 `Codex.FeishuNotify`：一个每日时间窗触发器、可选的每周全天运行触发器，以及未来法定节假日的日期触发器；
+6. 按 `-TaskName` 注册隐藏计划任务（推荐 `Codex.LarkNotify.codex`）：一个每日时间窗触发器、可选的每周全天运行触发器，以及未来法定节假日的日期触发器；
 7. 禁止按需启动，并且安装时不会手动启动任务。
+
+图形设置器在全新电脑上默认使用 `Codex.LarkNotify.codex`。底层命令行脚本为了兼容旧版本仍保留 `Codex.FeishuNotify` 作为未传 `-TaskName` 时的默认值；安装、检查和卸载时必须始终使用同一个任务名。
 
 `-HolidayRegion Auto` 根据 Windows“国家或地区”自动选择：新加坡使用 `SG`，中国使用 `CN`，无法识别时关闭节假日扩展。也可明确指定：
 
 ```powershell
 # 新加坡法定节假日；项目内置 2026-2027 日历
-pwsh -File .\scripts\Install.ps1 -ChatId 'oc_REPLACE_WITH_YOURS' -HolidayRegion SG
+pwsh -File .\scripts\Install.ps1 -ChatId 'oc_REPLACE_WITH_YOURS' `
+  -TaskName 'Codex.LarkNotify.codex' -HolidayRegion SG
 
 # 中国法定节假日；项目内置 2026 日历
-pwsh -File .\scripts\Install.ps1 -ChatId 'oc_REPLACE_WITH_YOURS' -HolidayRegion CN
+pwsh -File .\scripts\Install.ps1 -ChatId 'oc_REPLACE_WITH_YOURS' `
+  -TaskName 'Codex.LarkNotify.codex' -HolidayRegion CN
 
 # 不启用节假日全天运行
-pwsh -File .\scripts\Install.ps1 -ChatId 'oc_REPLACE_WITH_YOURS' -HolidayRegion None
+pwsh -File .\scripts\Install.ps1 -ChatId 'oc_REPLACE_WITH_YOURS' `
+  -TaskName 'Codex.LarkNotify.codex' -HolidayRegion None
 
 # 使用自行审核的本地日历
 pwsh -File .\scripts\Install.ps1 -ChatId 'oc_REPLACE_WITH_YOURS' `
+  -TaskName 'Codex.LarkNotify.codex' `
   -HolidayCalendarPath '.\my-holidays.json'
 
 # 每周六、周日全天运行；可与任一节假日模式叠加
 pwsh -File .\scripts\Install.ps1 -ChatId 'oc_REPLACE_WITH_YOURS' `
+  -TaskName 'Codex.LarkNotify.codex' `
   -HolidayRegion SG -AllDayWeekdays Saturday,Sunday
 ```
 
@@ -171,7 +218,22 @@ powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass `
 - 使用“飞书连接 / 运行计划 / 通知规则 / 状态与检查结果”分页；窗口可缩放，较小屏幕或高 DPI 下内容自动滚动，底部操作区保持可访问；
 - 从旧版 `drain.ps1` 导入已有私有参数，首次应用时迁移为受管的 `settings.local.json`。
 
-启动设置器本身只读取配置。点击“应用设置”或维护区的“安装通知”后会先显示确认信息，再复用同一安装器：备份现有配置，部署或修复通知脚本，合并用户级 Hook，修复 `notify` 命令链并重新注册任务，随后运行配置检查。“安装通知”适用于新电脑、其他 Windows 用户的 Codex 和配置被更新覆盖后的修复；它不会自动信任 Hook，完成后仍需重新打开 Codex，并在 Hook 管理界面审查、信任和启用新安装或已变化的 Hook。“运行计划：已开启/已关闭”是唯一的长期计划状态控件，切换后立即调用任务启用/停用并持久保存；时间窗等参数仍由“应用设置”提交。“马上开始 / 立刻停止”只写入带到期时间的临时覆盖状态，不调用 `Start-ScheduledTask`：开始时直接隐藏执行一次 `drain.ps1`，并在需要时增加一条到下个正常时段即失效的临时触发器；停止时让后续触发安全退出。应用设置、安装通知、卸载通知或关闭运行计划都会清除临时覆盖。飞书的立即开关仅修改本地投递配置。关闭飞书后，PC 通知继续工作，新事件不进入飞书队列，已有待发项移入可恢复的 `spool/suppressed`，再次打开时不会自动补发。飞书会话 ID 默认遮挡，检查输出不会打印该值。
+### 几个容易混淆的开关
+
+| 控件 | 实际作用 | 不会影响 |
+|---|---|---|
+| `运行计划：已开启 / 已关闭` | 立即启用或停用持久化的计划任务状态 | 不改每日时间窗，也不关闭飞书投递配置 |
+| `马上开始 / 立刻停止` | 临时强制运行或暂停；到下个正常时段边界后由原计划接管 | 不改已保存的每日时间窗，不调用计划任务的按需启动 |
+| `飞书通知：已开启 / 已关闭` | 控制本项目是否把新事件送入飞书队列 | 不会关闭飞书 App，也不关闭本项目的 PC Toast |
+| `PC 通知` | 控制本项目生成的 Windows Toast；关闭后子选项自动不可选但保留原值 | 不控制 Codex 桌面端自带通知，也不影响飞书发送 |
+
+关闭飞书通知后，新事件不进入飞书队列，已有待发项移入可恢复的 `spool/suppressed`；再次开启时不会自动补发这些旧项目。PC Toast 与飞书发送保持独立。
+
+### 应用、安装与安全确认
+
+启动设置器本身只读取配置。点击“应用设置”或维护区的“安装通知”后会先显示确认信息，再复用同一安装器：备份现有配置，部署或修复通知脚本，合并用户级 Hook，修复 `notify` 命令链并重新注册任务，随后运行配置检查。
+
+“安装通知”适用于新电脑、其他 Windows 用户，以及 Codex 更新后配置被覆盖的修复。它不会自动信任 Hook；完成后仍需重新打开 Codex，并在 Hook 管理界面审查、信任和启用新安装或已变化的 Hook。应用设置、安装通知、卸载通知或关闭运行计划都会清除临时运行覆盖。飞书会话 ID 默认遮挡，检查输出不会打印该值。
 
 命令行安装时也可预设关闭状态：`-DisableScheduledTask` 停用运行计划，`-NoFeishuNotifications` 关闭飞书投递。两个参数都不会按需运行计划任务。
 
@@ -180,6 +242,14 @@ powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass `
 ```powershell
 pwsh -NoProfile -File .\scripts\Settings-Gui.ps1 -ValidateOnly
 ```
+
+## 升级
+
+1. 从 [Latest Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 下载新版本 setup EXE 和对应 `.sha256`，核对哈希后运行。
+2. 新版管理程序会安装到新的版本目录，并让开始菜单快捷方式指向新版；它会自动识别现有的 `Codex.LarkNotify.codex` 或兼容的 `Codex.FeishuNotify`。
+3. 在新版设置器中检查现有配置，然后点击“安装通知”执行升级或修复。只运行 setup EXE、没有点击“安装通知”，不会替换当前正在生效的通知运行脚本。
+4. 安装器会备份现有私有配置、Hook 和运行文件。完成后重新打开 Codex，并重新审查发生变化的 Hook。
+5. 确认新版正常工作后，才可删除 `%LOCALAPPDATA%\Programs\CodexFeishuNotify` 下不再使用的旧版本管理目录。
 
 ## 重要配置
 
@@ -210,6 +280,7 @@ pwsh -NoProfile -File .\scripts\Settings-Gui.ps1 -ValidateOnly
 | `delivery.max_queue_age_hours` | `24` | 过期队列项不再发送 |
 | `lifecycle.strict_completion_gate` | `true` | `Stop` 先登记，同一任务的官方完成事件才能入队 |
 | `lifecycle.notify_permission_requests` | `true` | 接收真正的权限等待事件 |
+| `desktop.enabled` | `true` | 本项目 Windows Toast 总开关；不控制 Codex 自带通知或飞书发送 |
 | `desktop.only_when_codex_background` | `true` | 仅控制 PC Toast；不影响飞书发送 |
 | `message.format` | `card` | `card` 或 `text` |
 | `message.include_*_preview` | `true` | 是否发送任务和结果摘要；敏感场景建议关闭 |
@@ -224,8 +295,10 @@ pwsh -NoProfile -File .\scripts\Settings-Gui.ps1 -ValidateOnly
 只读诊断：
 
 ```powershell
-pwsh -File .\scripts\Test-Configuration.ps1
+pwsh -File .\scripts\Test-Configuration.ps1 -TaskName 'Codex.LarkNotify.codex'
 ```
+
+如果沿用旧任务 `Codex.FeishuNotify`，请把以上 `-TaskName` 改为实际名称。图形设置器的“状态与检查结果”页会自动使用当前识别到的任务名。
 
 查看最近的脱敏日志：
 
@@ -243,17 +316,21 @@ dry run 不会生成已发送标记，也不会删除待发项。计划任务禁
 
 ## 卸载
 
+推荐在图形设置器“飞书连接”页底部点击“卸载通知”，由设置器自动使用当前任务名。命令行卸载时必须传入实际任务名。
+
 先恢复 Codex 通知钩子并移除计划任务，保留队列和日志：
 
 ```powershell
-pwsh -File .\scripts\Uninstall.ps1
+pwsh -File .\scripts\Uninstall.ps1 -TaskName 'Codex.LarkNotify.codex'
 ```
 
 确认不再需要本地设置、日志和队列后，再永久删除安装目录：
 
 ```powershell
-pwsh -File .\scripts\Uninstall.ps1 -RemoveData
+pwsh -File .\scripts\Uninstall.ps1 -TaskName 'Codex.LarkNotify.codex' -RemoveData
 ```
+
+旧安装若使用 `Codex.FeishuNotify`，请相应替换 `-TaskName`；不要同时猜测或删除两个任务。
 
 卸载器只会在当前 `notify` 行仍与安装记录一致时自动恢复原值；生命周期 Hook 只删除本项目拥有的处理器，其他 Hook 保留。若用户之后改过配置，它会保留现状并要求人工检查。图形设置器“飞书连接”页底部的“卸载通知”会恢复安装前计划任务，并保留设置、日志和队列。
 
