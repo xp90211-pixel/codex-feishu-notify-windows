@@ -6,6 +6,12 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $failures = New-Object System.Collections.Generic.List[string]
 
+trap {
+    Write-Host "UNEXPECTED TEST ERROR: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor Red
+    exit 1
+}
+
 function Assert-True {
     param([bool] $Condition, [string] $Message)
     if (-not $Condition) { $failures.Add($Message) }
@@ -312,11 +318,13 @@ try {
         tool_input = [ordered]@{ command = 'secret command deliberately ignored' }
     } | ConvertTo-Json -Compress
     $permissionResult = Invoke-CfnTestHook $permissionPayload
-    Assert-True ($permissionResult.ExitCode -eq 0 -and -not $permissionResult.Stdout) 'PermissionRequest notification hooks must return quickly without approval output.'
+    Assert-True ($permissionResult.ExitCode -eq 0 -and -not $permissionResult.Stdout) "PermissionRequest notification hooks must return quickly without approval output. stderr=$($permissionResult.Stderr)"
     $waitingItems = @(Get-ChildItem -LiteralPath (Join-Path $tempIntegration 'spool\pending') -Filter '*.json' -File -ErrorAction SilentlyContinue)
     Assert-True ($waitingItems.Count -eq 1) 'A PermissionRequest must create one waiting queue item.'
-    $waitingItem = Get-Content -LiteralPath $waitingItems[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-    Assert-True ($waitingItem.kind -eq 'needs-input' -and -not $waitingItem.permission_tool) 'Permission events must omit tool details by default.'
+    if ($waitingItems.Count -eq 1) {
+        $waitingItem = Get-Content -LiteralPath $waitingItems[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True ($waitingItem.kind -eq 'needs-input' -and -not $waitingItem.permission_tool) 'Permission events must omit tool details by default.'
+    }
 
     $resumePayload = [ordered]@{
         session_id = 'test-thread'
@@ -351,8 +359,10 @@ try {
     & (Join-Path $tempIntegration 'notify.ps1') $payload
     $queued = @(Get-ChildItem -LiteralPath (Join-Path $tempIntegration 'spool\pending') -Filter '*.json' -File -ErrorAction SilentlyContinue)
     Assert-True ($queued.Count -eq 1) 'A valid completion event must create exactly one queue item.'
-    $completionItem = Get-Content -LiteralPath $queued[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-    Assert-True ($completionItem.kind -eq 'completed' -and $completionItem.schema -eq 2) 'Strictly released completions must use the version 2 queue schema.'
+    if ($queued.Count -eq 1) {
+        $completionItem = Get-Content -LiteralPath $queued[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True ($completionItem.kind -eq 'completed' -and $completionItem.schema -eq 2) 'Strictly released completions must use the version 2 queue schema.'
+    }
     & (Join-Path $tempIntegration 'notify.ps1') $payload
     $queuedAgain = @(Get-ChildItem -LiteralPath (Join-Path $tempIntegration 'spool\pending') -Filter '*.json' -File -ErrorAction SilentlyContinue)
     Assert-True ($queuedAgain.Count -eq 1) 'Duplicate completion events must not create duplicate queue items.'
