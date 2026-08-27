@@ -1,6 +1,6 @@
 # Codex Feishu Notify for Windows
 
-把 Codex 的真实用户任务完成事件可靠地转发到飞书，同时保留 Windows 端自己的通知模式。
+一个带有直观调节UI的转发器。把 Codex 的真实用户任务完成事件可靠地转发到飞书，同时保留 Windows 端自己的通知模式。
 
 这是一个非官方社区项目，与 OpenAI、飞书或 Lark 均无隶属关系。当前版本仅支持 Windows 与已认证的 `lark-cli` 配置。
 
