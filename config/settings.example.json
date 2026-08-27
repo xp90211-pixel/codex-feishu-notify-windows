@@ -1,0 +1,48 @@
+{
+  "schema": 2,
+  "transport": {
+    "type": "lark-cli",
+    "enabled": true,
+    "chat_id": "oc_REPLACE_ME",
+    "cli_path": "",
+    "channel_home": "%USERPROFILE%\\.lark-channel",
+    "profile": "codex",
+    "require_profile": true,
+    "send_attempts_per_run": 2,
+    "retry_delay_seconds": 2
+  },
+  "filters": {
+    "visible_threads_only": true,
+    "skip_bridge_origin": true
+  },
+  "delivery": {
+    "start": "18:40",
+    "end": "02:00",
+    "interval_minutes": 1,
+    "holiday_region": "SG",
+    "holiday_calendar": "holidays.local.json",
+    "all_day_weekdays": [],
+    "max_queue_age_hours": 24,
+    "sent_marker_retention_days": 90,
+    "expired_item_retention_days": 7
+  },
+  "lifecycle": {
+    "strict_completion_gate": true,
+    "completion_arm_ttl_minutes": 10,
+    "notify_permission_requests": true,
+    "waiting_state_ttl_hours": 24,
+    "ready_state_ttl_hours": 720
+  },
+  "desktop": {
+    "enabled": true,
+    "only_when_codex_background": true,
+    "completion": true,
+    "permission_request": true
+  },
+  "message": {
+    "format": "card",
+    "include_task_preview": true,
+    "include_result_preview": true,
+    "include_permission_tool": false
+  }
+}

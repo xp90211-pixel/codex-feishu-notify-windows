@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "region": "CN",
+  "timezone": "China Standard Time",
+  "source": {
+    "name": "General Office of the State Council of China",
+    "url": "https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm",
+    "retrieved": "2026-08-22"
+  },
+  "holidays": [
+    { "date": "2026-01-01", "name": "New Year's Day holiday" },
+    { "date": "2026-01-02", "name": "New Year's Day holiday" },
+    { "date": "2026-01-03", "name": "New Year's Day holiday" },
+    { "date": "2026-02-15", "name": "Spring Festival holiday" },
+    { "date": "2026-02-16", "name": "Spring Festival holiday" },
+    { "date": "2026-02-17", "name": "Spring Festival holiday" },
+    { "date": "2026-02-18", "name": "Spring Festival holiday" },
+    { "date": "2026-02-19", "name": "Spring Festival holiday" },
+    { "date": "2026-02-20", "name": "Spring Festival holiday" },
+    { "date": "2026-02-21", "name": "Spring Festival holiday" },
+    { "date": "2026-02-22", "name": "Spring Festival holiday" },
+    { "date": "2026-02-23", "name": "Spring Festival holiday" },
+    { "date": "2026-04-04", "name": "Qingming Festival holiday" },
+    { "date": "2026-04-05", "name": "Qingming Festival holiday" },
+    { "date": "2026-04-06", "name": "Qingming Festival holiday" },
+    { "date": "2026-05-01", "name": "Labour Day holiday" },
+    { "date": "2026-05-02", "name": "Labour Day holiday" },
+    { "date": "2026-05-03", "name": "Labour Day holiday" },
+    { "date": "2026-05-04", "name": "Labour Day holiday" },
+    { "date": "2026-05-05", "name": "Labour Day holiday" },
+    { "date": "2026-06-19", "name": "Dragon Boat Festival holiday" },
+    { "date": "2026-06-20", "name": "Dragon Boat Festival holiday" },
+    { "date": "2026-06-21", "name": "Dragon Boat Festival holiday" },
+    { "date": "2026-09-25", "name": "Mid-Autumn Festival holiday" },
+    { "date": "2026-09-26", "name": "Mid-Autumn Festival holiday" },
+    { "date": "2026-09-27", "name": "Mid-Autumn Festival holiday" },
+    { "date": "2026-10-01", "name": "National Day holiday" },
+    { "date": "2026-10-02", "name": "National Day holiday" },
+    { "date": "2026-10-03", "name": "National Day holiday" },
+    { "date": "2026-10-04", "name": "National Day holiday" },
+    { "date": "2026-10-05", "name": "National Day holiday" },
+    { "date": "2026-10-06", "name": "National Day holiday" },
+    { "date": "2026-10-07", "name": "National Day holiday" }
+  ],
+  "workdays": [
+    { "date": "2026-01-04", "name": "Adjusted working day" },
+    { "date": "2026-02-14", "name": "Adjusted working day" },
+    { "date": "2026-02-28", "name": "Adjusted working day" },
+    { "date": "2026-05-09", "name": "Adjusted working day" },
+    { "date": "2026-09-20", "name": "Adjusted working day" },
+    { "date": "2026-10-10", "name": "Adjusted working day" }
+  ]
+}

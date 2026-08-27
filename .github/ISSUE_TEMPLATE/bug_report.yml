@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a reproducible problem without sharing credentials or private task content.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not paste tokens, webhook URLs, app secrets, chat IDs, raw queue files, or unredacted logs.
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+    validations:
+      required: true
+  - type: input
+    id: powershell
+    attributes:
+      label: PowerShell version
+      placeholder: 7.5.x
+    validations:
+      required: true
+  - type: input
+    id: larkcli
+    attributes:
+      label: lark-cli version
+      placeholder: 1.0.x
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use placeholders for all IDs and paths.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: Test-Configuration output
+      description: Review and redact it before pasting.

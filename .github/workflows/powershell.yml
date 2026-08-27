@@ -1,0 +1,26 @@
+name: PowerShell checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Run project tests on PowerShell 7
+        shell: pwsh
+        run: ./tests/Test-Project.ps1
+
+      - name: Run project tests on Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/Test-Project.ps1
