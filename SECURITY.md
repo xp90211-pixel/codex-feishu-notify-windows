@@ -22,6 +22,8 @@ Permission events omit `tool_input`, commands, paths, and approval descriptions.
 
 The project runs as the signed-in Windows user and invokes a locally authenticated `lark-cli` profile. It does not copy authentication material into the project directory. Review PowerShell changes before installing an untrusted fork.
 
+The one-click Release installer runs per-user with `asInvoker`, embeds the same public Release ZIP, rejects archive paths outside its product staging directory, and does not request elevation or contain local credentials. It only installs the management files, creates a Start menu shortcut, and opens the graphical settings tool; Codex hooks, scheduled tasks, and private settings still require an explicit confirmation in that tool. The installer is not currently Authenticode-signed, so verify its SHA-256 attachment before running it. An unknown-publisher SmartScreen warning is not proof that a download is safe.
+
 Lifecycle hooks are notification-only. They must not return `allow`, `deny`, `block`, updated permissions, arbitrary input, or automatic continuation instructions. The strict completion gate prevents ordinary accidental completion reports; it is not cryptographic authentication against another process running as the same Windows user.
 
 Feishu card callbacks, remote approvals, and terminal input require a separate listener and a stronger authorization boundary. They are intentionally disabled; see `docs/remote-control-evaluation.md`.

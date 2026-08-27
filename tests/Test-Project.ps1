@@ -490,6 +490,17 @@ Assert-True ($guiModuleSource -match 'ConvertFrom-Json' -and $guiModuleSource -m
 Assert-True ($guiModuleSource -match 'foreach \(\$candidate in @\(''Codex\.LarkNotify\.codex'', ''Codex\.FeishuNotify''\)\)' -and $guiModuleSource -match 'else \{\s*\$TaskName = ''Codex\.LarkNotify\.codex''\s*\}') 'The GUI must preserve compatible tasks but default a clean-machine install to Codex.LarkNotify.codex.'
 Assert-True (Test-Path -LiteralPath (Join-Path $projectRoot 'Open-Settings.cmd') -PathType Leaf) 'The project must include a double-click GUI launcher.'
 
+$oneClickBuilderSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\New-OneClickInstaller.ps1') -Raw
+$oneClickBootstrapperSource = Get-Content -LiteralPath (Join-Path $projectRoot 'installer\Bootstrapper.cs') -Raw
+$oneClickManifestSource = Get-Content -LiteralPath (Join-Path $projectRoot 'installer\app.manifest') -Raw
+$releaseWorkflowSource = Get-Content -LiteralPath (Join-Path $projectRoot '.github\workflows\release.yml') -Raw
+$releasePackageSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\New-ReleasePackage.ps1') -Raw
+Assert-True ($oneClickBuilderSource -match 'New-ReleasePackage\.ps1' -and $oneClickBuilderSource -match 'CodexFeishuNotify\.Payload\.zip' -and $oneClickBuilderSource -match 'Get-AuthenticodeSignature') 'The one-click build must embed the public ZIP, emit a checksum, and report signing status.'
+Assert-True ($oneClickBootstrapperSource -match 'IsChildPath' -and $oneClickBootstrapperSource -match 'invalid path segment' -and $oneClickBootstrapperSource -match 'backupDirectory') 'The one-click bootstrapper must reject unsafe archive paths and preserve replacement rollback.'
+Assert-True ($oneClickBootstrapperSource -match 'SpecialFolder\.LocalApplicationData' -and $oneClickBootstrapperSource -match 'ProductDirectoryName' -and $oneClickBootstrapperSource -match 'SpecialFolder\.Programs') 'The one-click bootstrapper must use a per-user product directory and Start menu shortcut.'
+Assert-True ($oneClickManifestSource -match 'requestedExecutionLevel level="asInvoker"' -and $oneClickManifestSource -notmatch 'requireAdministrator') 'The one-click installer must not request elevation.'
+Assert-True ($releasePackageSource -match "'installer'" -and $releaseWorkflowSource -match 'Test-OneClickInstaller\.ps1' -and $releaseWorkflowSource -match 'New-OneClickInstaller\.ps1' -and $releaseWorkflowSource -match "'release', 'create'" -and $releaseWorkflowSource -match 'gh @releaseArguments') 'Release packaging and tag automation must include and smoke-test the one-click installer.'
+
 $installerSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\Install.ps1') -Raw
 Assert-True ($installerSource -match 'Get-CfnUpdatedHooksJson' -and $installerSource -match 'hooks\.json\.before-') 'The installer must merge and back up lifecycle hooks.'
 Assert-True ($installerSource -match 'deployment-' -and $installerSource -match 'AllowDemandStart') 'The installer must snapshot upgrades and verify demand start stays disabled.'

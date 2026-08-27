@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-08-27
+
+- Added a single-file, per-user Windows setup executable that embeds the reviewed Release ZIP, installs versioned management files, creates a Start menu shortcut, and opens the graphical settings tool without requesting elevation.
+- Added archive traversal protection, replacement rollback, SHA-256 output, an `asInvoker` manifest, and a build/extract/reinstall smoke test for the setup executable.
+- Added an idempotent tag-triggered GitHub Actions release workflow that publishes the ZIP, setup executable, and both checksum files.
 - Added a prerequisite guide for preparing Feishu, `lark-cli`, and an isolated Codex profile with the third-party `lark-coding-agent-bridge`, including a safety-focused prompt that keeps access owner-only by default.
 
 ## 0.4.0 - 2026-08-27

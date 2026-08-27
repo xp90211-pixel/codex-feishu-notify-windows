@@ -72,7 +72,25 @@ flowchart LR
 
 连接器配置完成后，再回到本项目确认：系统能自动找到 `lark-cli`（或在图形设置器中指定路径）、已选择正确的本地 profile（推荐为 Codex 使用独立 profile），并已取得接收通知的目标会话 ID。不要把 App Secret、profile 配置或真实会话 ID 提交到仓库。
 
-## 快速安装
+## 一键安装（推荐）
+
+1. 打开 [Releases](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest)，下载最新版的 `codex-feishu-notify-windows-vX.Y.Z-setup.exe` 和同名 `.sha256` 文件。
+2. 在 PowerShell 中核对安装器哈希：
+
+   ```powershell
+   (Get-FileHash .\codex-feishu-notify-windows-vX.Y.Z-setup.exe -Algorithm SHA256).Hash
+   Get-Content .\codex-feishu-notify-windows-vX.Y.Z-setup.exe.sha256
+   ```
+
+3. 两边哈希一致后双击安装器。它不要求管理员权限，会把管理程序安装到 `%LOCALAPPDATA%\Programs\CodexFeishuNotify\vX.Y.Z`，创建开始菜单快捷方式并自动打开“Codex 飞书通知设置”。
+4. 在图形设置器中填写飞书会话 ID，核对自动找到的 `lark-cli` 与 profile，设置运行计划，然后点击“安装通知”并确认变更。
+5. 安装完成后重新打开 Codex，在 Hook 管理界面审查、信任并启用本项目安装或更新的 Hook。
+
+这个 EXE 是“一键打开安装向导”，不会静默创建飞书应用、代替用户扫码授权、开放其他用户访问、写入真实会话 ID，或绕过 Codex 的 Hook 信任步骤。重复运行同一版本会安全替换该版本的管理程序文件，不会直接覆盖已经生效的私有通知配置。
+
+当前 Release 安装器尚未使用商业代码签名证书，Windows SmartScreen 可能显示“未知发布者”。只有在下载地址确认为本仓库且 SHA-256 与 Release 附件一致时才应继续；不愿运行未签名 EXE 时，请改用下方命令行安装或 Release ZIP。
+
+## 命令行安装
 
 在 PowerShell 中执行：
 
@@ -239,6 +257,8 @@ pwsh -File .\scripts\Uninstall.ps1 -RemoveData
 
 卸载器只会在当前 `notify` 行仍与安装记录一致时自动恢复原值；生命周期 Hook 只删除本项目拥有的处理器，其他 Hook 保留。若用户之后改过配置，它会保留现状并要求人工检查。图形设置器“飞书连接”页底部的“卸载通知”会恢复安装前计划任务，并保留设置、日志和队列。
 
+一键安装器部署的管理程序与实际通知集成相互独立，因此“卸载通知”不会删除管理程序。确认通知集成已经卸载后，可关闭设置器，再删除对应的 `%LOCALAPPDATA%\Programs\CodexFeishuNotify\vX.Y.Z` 版本目录和开始菜单中的 `Codex Feishu Notify` 快捷方式；不要删除仍在使用的其他版本目录。
+
 ## 隐私与安全
 
 - 不要提交 `settings.local.json`、`.lark-channel`、日志、队列、备份或真实会话 ID。
@@ -254,8 +274,9 @@ pwsh -File .\scripts\Uninstall.ps1 -RemoveData
 ```text
 src/                         运行时脚本与公共模块
 scripts/                     安装、卸载、只读诊断
+installer/                   单文件 Windows 安装器源码与权限清单
 config/                       无真实标识的配置样例及官方节假日日历
-tests/Test-Project.ps1       语法、调度、过滤与泄密检查
+tests/                        项目不变量、GUI 与一键安装器冒烟测试
 .github/                     CI、Issue 和 PR 模板
 docs/                        架构、迁移与 GitHub 发布攻略
 ```

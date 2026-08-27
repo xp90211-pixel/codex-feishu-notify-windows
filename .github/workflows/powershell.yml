@@ -24,3 +24,7 @@ jobs:
       - name: Run project tests on Windows PowerShell 5.1
         shell: powershell
         run: ./tests/Test-Project.ps1
+
+      - name: Build and smoke-test the one-click installer
+        shell: pwsh
+        run: ./tests/Test-OneClickInstaller.ps1 -Version 0.0.0-ci

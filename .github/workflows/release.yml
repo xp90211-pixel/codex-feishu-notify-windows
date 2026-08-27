@@ -1,0 +1,73 @@
+name: Release package
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate version tag
+        id: version
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Unsupported release tag: $env:GITHUB_REF_NAME"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Run project tests
+        shell: pwsh
+        run: ./tests/Test-Project.ps1
+
+      - name: Build and smoke-test installer
+        shell: pwsh
+        run: ./tests/Test-OneClickInstaller.ps1 -Version 0.0.0-release-ci
+
+      - name: Build release assets
+        shell: pwsh
+        run: ./scripts/New-OneClickInstaller.ps1 -Version '${{ steps.version.outputs.version }}'
+
+      - name: Create or update GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = '${{ steps.version.outputs.version }}'
+          $notes = "docs/releases/$tag.md"
+          if (-not (Test-Path -LiteralPath $notes -PathType Leaf)) {
+            throw "Release notes are missing: $notes"
+          }
+          $assets = @(
+            "dist/codex-feishu-notify-windows-v$version.zip",
+            "dist/codex-feishu-notify-windows-v$version.zip.sha256",
+            "dist/codex-feishu-notify-windows-v$version-setup.exe",
+            "dist/codex-feishu-notify-windows-v$version-setup.exe.sha256"
+          )
+          $isPrerelease = $version.Contains('-')
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          $releaseExists = ($LASTEXITCODE -eq 0)
+          if ($releaseExists) {
+            gh release upload $tag @assets --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload release assets.' }
+            $prereleaseValue = $isPrerelease.ToString().ToLowerInvariant()
+            gh release edit $tag --title "$tag - One-click Windows setup" --notes-file $notes "--prerelease=$prereleaseValue" --repo $env:GITHUB_REPOSITORY
+          } else {
+            $releaseArguments = @('release', 'create', $tag) + $assets + @('--verify-tag', '--title', "$tag - One-click Windows setup", '--notes-file', $notes, '--repo', $env:GITHUB_REPOSITORY)
+            if ($isPrerelease) { $releaseArguments += '--prerelease' }
+            gh @releaseArguments
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to publish the GitHub Release.' }

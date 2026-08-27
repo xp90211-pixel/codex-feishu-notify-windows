@@ -35,6 +35,7 @@ $includedPaths = @(
     'Open-Settings.cmd',
     'config',
     'docs',
+    'installer',
     'scripts',
     'src',
     'tests'

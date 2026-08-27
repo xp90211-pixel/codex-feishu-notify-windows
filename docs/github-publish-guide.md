@@ -142,30 +142,32 @@ git push -u origin feat/short-description
 - 完成 PR 模板中的测试、调度和泄密检查；
 - Actions 通过且人工审核后，再标记 Ready for review 并合并。
 
-## 九、发布 v0.4.0
+## 九、发布新版本
 
 合并并确认 `main` 通过后：
 
 ```powershell
 git switch main
 git pull --ff-only
-git tag -a v0.4.0 -m "Codex Feishu Notify for Windows v0.4.0"
-git push origin v0.4.0
 
-pwsh -File .\scripts\New-ReleasePackage.ps1 -Version 0.4.0
+# 本地预检：同时生成 ZIP 与一键安装器，并执行真实解包/覆盖重装冒烟测试
+pwsh -File .\tests\Test-OneClickInstaller.ps1 -Version 0.5.0-test
+pwsh -File .\scripts\New-OneClickInstaller.ps1 -Version 0.5.0
+
+git tag -a v0.5.0 -m "Codex Feishu Notify for Windows v0.5.0"
+git push origin v0.5.0
 ```
 
-在 GitHub `Releases > Draft a new release`：
+推送符合 `v*` 的标签后，`.github/workflows/release.yml` 会再次执行项目测试和安装器冒烟测试，并自动创建或更新 Release：
 
-1. 选择 `v0.4.0`；
-2. 标题填 `v0.4.0 - Windows scheduling controls`；
-3. 使用 `docs/releases/v0.4.0.md` 作为发布说明；
-4. 上传 `dist/codex-feishu-notify-windows-v0.4.0.zip` 及其 `.sha256`；
-5. 首次可勾选 pre-release 供少量用户验证，确认安装、卸载和临时开始/停止后再转为稳定版。
+1. 使用同名 `docs/releases/vX.Y.Z.md` 作为发布说明；
+2. 上传 `codex-feishu-notify-windows-vX.Y.Z.zip`、对应的 `.zip.sha256`、`codex-feishu-notify-windows-vX.Y.Z-setup.exe` 和对应的 `.exe.sha256`；
+3. 首次引入的新安装流程可先用预发布标签供少量用户验证，确认安装、卸载和临时开始/停止后再发布稳定标签。
 
 ## 十、每次发布前的最小清单
 
 - [ ] `tests/Test-Project.ps1` 本地和 Actions 均通过。
+- [ ] `tests/Test-OneClickInstaller.ps1` 已完成构建、解包与同版本覆盖重装。
 - [ ] staged diff 已人工检查。
 - [ ] 没有真实 chat ID、token、webhook、配置目录、队列或日志。
 - [ ] `notify.ps1` 不调用 `Start-ScheduledTask`。
@@ -175,3 +177,4 @@ pwsh -File .\scripts\New-ReleasePackage.ps1 -Version 0.4.0
 - [ ] 节假日日期触发器只补齐普通时间窗未覆盖的部分，日历年份和官方来源已复核。
 - [ ] 时间窗、升级、卸载和回滚文档与代码一致。
 - [ ] `CHANGELOG.md` 和版本标签一致。
+- [ ] Release 同时包含 ZIP、setup EXE 和各自的 SHA-256 文件，未签名状态已在说明中明确披露。
