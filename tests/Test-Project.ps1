@@ -278,19 +278,26 @@ try {
     function Invoke-CfnTestHook {
         param([Parameter(Mandatory = $true)] [string] $Json)
         $executable = (Get-Process -Id $PID).Path
+        $hookPath = (Join-Path $tempIntegration 'hook.ps1').Replace("'", "''")
+        $jsonBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Json))
+        # GitHub-hosted Windows PowerShell 5.1 does not reliably forward a
+        # ProcessStartInfo StandardInput stream into Console.In. Set Console.In
+        # inside the isolated child instead; hook.ps1 still exercises its real
+        # ReadToEnd path, and production behavior remains unchanged.
+        $testCommand = '$json = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(''' +
+            $jsonBase64 + ''')); [Console]::SetIn((New-Object System.IO.StringReader($json))); & ''' +
+            $hookPath + ''''
+        $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($testCommand))
         $startInfo = New-Object System.Diagnostics.ProcessStartInfo
         $startInfo.FileName = $executable
-        $startInfo.Arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"' -f (Join-Path $tempIntegration 'hook.ps1')
+        $startInfo.Arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encodedCommand
         $startInfo.UseShellExecute = $false
         $startInfo.CreateNoWindow = $true
-        $startInfo.RedirectStandardInput = $true
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $startInfo
         [void]$process.Start()
-        $process.StandardInput.Write($Json)
-        $process.StandardInput.Close()
         $stdout = $process.StandardOutput.ReadToEnd()
         $stderr = $process.StandardError.ReadToEnd()
         $process.WaitForExit(15000) | Out-Null
