@@ -480,10 +480,10 @@ Assert-True ($installerSource -match 'NoFeishuNotifications' -and $installerSour
 Assert-True ($installerSource -match 'AllDayWeekdays' -and $installerSource -match 'New-ScheduledTaskTrigger\s+-Weekly') 'The installer must persist all-day weekdays and create true weekly gap triggers.'
 
 $gitIgnore = Get-Content -LiteralPath (Join-Path $projectRoot '.gitignore') -Raw
-Assert-True ($gitIgnore -match '(?m)^settings\.local\.json$') 'settings.local.json must be ignored by Git.'
-Assert-True ($gitIgnore -match '(?m)^holidays\.local\.json$') 'The installed holiday calendar must be ignored by Git.'
-Assert-True ($gitIgnore -match '(?m)^spool/$') 'Spool data must be ignored by Git.'
-Assert-True ($gitIgnore -match '(?m)^logs/$') 'Logs must be ignored by Git.'
+Assert-True ($gitIgnore -match '(?m)^settings\.local\.json\r?$') 'settings.local.json must be ignored by Git.'
+Assert-True ($gitIgnore -match '(?m)^holidays\.local\.json\r?$') 'The installed holiday calendar must be ignored by Git.'
+Assert-True ($gitIgnore -match '(?m)^spool/\r?$') 'Spool data must be ignored by Git.'
+Assert-True ($gitIgnore -match '(?m)^logs/\r?$') 'Logs must be ignored by Git.'
 
 $trackedCandidates = Get-ChildItem -LiteralPath $projectRoot -Recurse -File | Where-Object {
     $_.FullName -notmatch '[\\/]\.git[\\/]' -and
