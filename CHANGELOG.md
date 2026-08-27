@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Added a prerequisite guide for preparing Feishu, `lark-cli`, and an isolated Codex profile with the third-party `lark-coding-agent-bridge`, including a safety-focused prompt that keeps access owner-only by default.
+
 ## 0.4.0 - 2026-08-27
 
 - Added one dynamic `马上开始 / 立刻停止` control to the run-schedule tab without changing the saved daily window.

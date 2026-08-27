@@ -55,10 +55,22 @@ flowchart LR
 - Windows 10/11。
 - Codex 支持用户级 `notify` 与生命周期 Hooks；新安装后需重新开启 Codex 才能完整加载 Hook。
 - PowerShell 7 优先；缺失时安装器回退到 Windows PowerShell。
-- `lark-cli` 已安装，并准备好可代表机器人发送消息的本地配置。（可以参考别人的项目https://github.com/zarazhangrui/lark-coding-agent-bridge/blob/main/README.zh.md）
+- `lark-cli` 已安装，并准备好可代表机器人发送消息的本地配置。
 - 已知目标会话 ID，例如 `oc_xxx`。不要把真实 ID 提交到 Git。
 
 当前实现已按本机 `lark-cli 1.0.76` 的 `im +messages-send` 命令验证。其他版本应先运行诊断和 dry run。
+
+### 前置：安装飞书连接器与准备 lark-cli
+
+如果还没有可用的飞书连接器或 `lark-cli` 配置，可以参考第三方项目 [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge) 的[中文安装说明](https://github.com/zarazhangrui/lark-coding-agent-bridge/blob/main/README.zh.md)。它用于把飞书 / Lark 与本地 Codex CLI 等编程助手连接起来，支持 Windows 后台任务、独立 profile 和默认仅创建者可用的访问控制。
+
+该连接器与本项目相互独立，并由各自作者维护。它的安装过程可能涉及扫码授权、创建飞书 PersonalAgent 应用和修改访问范围；建议把下面这段完整提示词直接复制给 Codex（ChatGPT），让它按对方最新 README 检查环境并协助安装：
+
+```text
+请参考下面的 README，帮我安装并配置 lark-channel-bridge，并告诉我怎么使用。请先检查我的环境是否满足前提条件；涉及授权、扫码、创建飞书应用或开放他人访问时，必须先征得我确认；默认只允许我自己使用，不要开放给群成员或其他同事。README：https://github.com/zarazhangrui/lark-coding-agent-bridge/blob/main/README.zh.md
+```
+
+连接器配置完成后，再回到本项目确认：系统能自动找到 `lark-cli`（或在图形设置器中指定路径）、已选择正确的本地 profile（推荐为 Codex 使用独立 profile），并已取得接收通知的目标会话 ID。不要把 App Secret、profile 配置或真实会话 ID 提交到仓库。
 
 ## 快速安装
 
