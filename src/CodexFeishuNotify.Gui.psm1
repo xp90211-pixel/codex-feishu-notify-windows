@@ -58,8 +58,8 @@ function Get-CfnGuiTarget {
 
     if (-not $InstallRoot) { $InstallRoot = Get-CfnGuiTaskInstallRoot $task }
     if (-not $InstallRoot) {
-        $legacyRoot = Join-Path $env:USERPROFILE '.codex\integrations\lark-channel-notify'
-        $portableRoot = Join-Path $env:USERPROFILE '.codex\integrations\codex-feishu-notify'
+        $legacyRoot = Join-Path (Get-CfnCodexHome) 'integrations\lark-channel-notify'
+        $portableRoot = Join-Path (Get-CfnCodexHome) 'integrations\codex-feishu-notify'
         if ($TaskName -eq 'Codex.LarkNotify.codex' -and (Test-Path -LiteralPath $legacyRoot)) {
             $InstallRoot = $legacyRoot
         } elseif (Test-Path -LiteralPath $portableRoot) {
@@ -189,8 +189,8 @@ function Get-CfnGuiModel {
         HolidayCalendarPath = ''
         AllDayWeekdays = @()
         MaxQueueAgeHours = 24
-        IncludeTaskPreview = $true
-        IncludeResultPreview = $true
+        IncludeTaskPreview = $false
+        IncludeResultPreview = $false
         IncludePermissionTool = $false
         MessageFormat = 'card'
     }
@@ -252,7 +252,7 @@ function Get-CfnGuiModel {
 
     $drainPath = Join-Path $InstallRoot 'drain.ps1'
     if (Test-Path -LiteralPath $drainPath -PathType Leaf) {
-        $legacyText = Get-Content -LiteralPath $drainPath -Raw
+        $legacyText = Get-Content -LiteralPath $drainPath -Raw -Encoding UTF8
         $model.Source = 'legacy'
         $model.SourcePath = $drainPath
         $model.ChatId = Get-CfnGuiAssignedValue $legacyText 'ChatId'
@@ -295,7 +295,7 @@ function Test-CfnGuiModel {
     if ([string]::IsNullOrWhiteSpace([string]$Model.InstallRoot)) {
         $errors.Add('安装目录不能为空。')
     }
-    if ([string]$Model.ChatId -notmatch '^oc_[A-Za-z0-9_-]{8,}$') {
+    if ($Model.FeishuEnabled -and [string]$Model.ChatId -notmatch '^oc_[A-Za-z0-9_-]{8,}$') {
         $errors.Add('飞书会话 ID 应为 oc_ 开头的有效值。')
     }
 
@@ -340,6 +340,7 @@ function Test-CfnGuiModel {
     if ($invalidWeekdays.Count -gt 0) {
         $errors.Add("全天运行日包含无效值：$($invalidWeekdays -join '、')。")
     }
+    if ($Model.FeishuEnabled) {
     if ([string]$Model.LarkCliPath) {
         $cliPath = Resolve-CfnPath ([string]$Model.LarkCliPath)
         if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {
@@ -362,6 +363,7 @@ function Test-CfnGuiModel {
         }
     }
 
+    }
     [pscustomobject]@{
         Valid = ($errors.Count -eq 0)
         Errors = $errors.ToArray()
@@ -412,6 +414,8 @@ function Get-CfnGuiInstallParameters {
     # Install.ps1 receives its declared @() default instead of failing ValidateSet.
     if ($allDayWeekdays.Count -gt 0) {
         $parameters.AllDayWeekdays = [string[]]$allDayWeekdays
+    } else {
+        $parameters.ClearAllDayWeekdays = $true
     }
     if ([string]$Model.HolidayRegion -eq 'Custom') {
         $parameters.HolidayRegion = 'Auto'
@@ -428,6 +432,8 @@ function Set-CfnGuiFeishuEnabled {
         [Parameter(Mandatory = $true)] [bool] $Enabled
     )
 
+    $stateLock = Enter-CfnMutex $InstallRoot 'state'
+    try {
     $settingsPath = Join-Path $InstallRoot 'settings.local.json'
     if (-not (Test-Path -LiteralPath $settingsPath -PathType Leaf)) {
         throw "受管配置不存在：$settingsPath"
@@ -446,14 +452,7 @@ function Set-CfnGuiFeishuEnabled {
     $backupPath = Join-Path $backupRoot "settings.local.json.before-feishu-toggle-$stamp.bak"
     Copy-Item -LiteralPath $settingsPath -Destination $backupPath
 
-    $tempPath = "$settingsPath.$PID.tmp"
-    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    try {
-        [System.IO.File]::WriteAllText($tempPath, ($settingsDocument | ConvertTo-Json -Depth 8), $utf8NoBom)
-        Move-Item -LiteralPath $tempPath -Destination $settingsPath -Force
-    } finally {
-        Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
-    }
+    Write-CfnJsonAtomic $settingsPath $settingsDocument
 
     $suppressedCount = 0
     if (-not $Enabled) {
@@ -466,6 +465,7 @@ function Set-CfnGuiFeishuEnabled {
         BackupPath = $backupPath
         SuppressedCount = $suppressedCount
     }
+    } finally { Exit-CfnMutex $stateLock }
 }
 
 function Get-CfnGuiPowerShellExecutable {
@@ -499,7 +499,7 @@ function Set-CfnGuiManualTrigger {
     if ($baseTriggers.Count -ge 48) {
         throw '计划任务已有 48 个触发器，无法增加临时运行触发器；请缩短自定义节假日日历范围后重新应用设置。'
     }
-    $firstRun = $Now.AddMinutes($IntervalMinutes)
+    $firstRun = $Now.AddSeconds(2)
     if ($firstRun -ge $ExpiresAt) {
         if ($hadManualTrigger) {
             Set-ScheduledTask -TaskName $TaskName -Trigger $baseTriggers -ErrorAction Stop | Out-Null
@@ -507,31 +507,18 @@ function Set-CfnGuiManualTrigger {
         return $false
     }
     $duration = $ExpiresAt - $firstRun
-    if ($duration -lt [timespan]::FromMinutes($IntervalMinutes)) {
-        if ($hadManualTrigger) {
-            Set-ScheduledTask -TaskName $TaskName -Trigger $baseTriggers -ErrorAction Stop | Out-Null
-        }
-        return $false
-    }
     $manualTrigger = New-ScheduledTaskTrigger -Once -At $firstRun
     $manualTrigger.Id = $script:CfnManualTriggerId
+    if ($duration -ge [timespan]::FromMinutes($IntervalMinutes)) {
     $manualTrigger.Repetition = New-CimInstance -ClassName MSFT_TaskRepetitionPattern `
         -Namespace 'Root/Microsoft/Windows/TaskScheduler' -ClientOnly -Property @{
             Interval = "PT${IntervalMinutes}M"
             Duration = ConvertTo-CfnIsoDuration $duration
             StopAtDurationEnd = $true
         }
+    }
     Set-ScheduledTask -TaskName $TaskName -Trigger @($baseTriggers + $manualTrigger) -ErrorAction Stop | Out-Null
     return $true
-}
-
-function Invoke-CfnGuiDrainNow {
-    param([Parameter(Mandatory = $true)] [string] $InstallRoot)
-
-    $drainPath = Join-Path $InstallRoot 'drain.ps1'
-    if (-not (Test-Path -LiteralPath $drainPath -PathType Leaf)) { throw "投递脚本不存在：$drainPath" }
-    $arguments = '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File "{0}"' -f $drainPath.Replace('"', '\"')
-    Start-Process -FilePath (Get-CfnGuiPowerShellExecutable) -ArgumentList $arguments -WindowStyle Hidden | Out-Null
 }
 
 function Clear-CfnGuiManualDeliveryOverride {
@@ -560,6 +547,7 @@ function Invoke-CfnGuiManualDeliveryToggle {
     if ([string]$task.State -eq 'Disabled') { throw '运行计划已关闭；请先打开“运行计划：已关闭”。' }
     $settings = Get-CfnSettings $InstallRoot
     $control = Get-CfnDeliveryControlState $InstallRoot $settings $Now
+    if ($control.Reason -eq 'schedule_disabled') { throw '运行计划已关闭；请先开启运行计划。' }
     $nextStart = [datetime]$control.NextScheduleStart
 
     if ($control.EffectiveActive) {
@@ -597,7 +585,10 @@ function Invoke-CfnGuiManualDeliveryToggle {
         $expiresAt = $manual.ExpiresAt
         $action = 'forced'
     }
-    if (-not $NoImmediateDrain) { Invoke-CfnGuiDrainNow $InstallRoot }
+    if (-not $NoImmediateDrain -and -not $temporaryTrigger) {
+        $temporaryTrigger = Set-CfnGuiManualTrigger -TaskName $TaskName -Enabled $true `
+            -ExpiresAt $nextStart -IntervalMinutes $settings.IntervalMinutes -Now $Now
+    }
     Write-CfnLog $InstallRoot 'manual_control' $action '' $(if ($null -ne $expiresAt) { "until=$($expiresAt.ToString('o'))" } else { 'current-window' })
     return [pscustomobject]@{
         Action = $action
@@ -605,6 +596,19 @@ function Invoke-CfnGuiManualDeliveryToggle {
         ExpiresAt = $expiresAt
         TemporaryTrigger = [bool]$temporaryTrigger
     }
+}
+
+function Get-CfnGuiActiveStateCount {
+    param([string] $Root, [string] $Kind, [string] $Timestamp, [double] $TtlHours)
+    $active = 0
+    foreach ($file in @(Get-ChildItem -LiteralPath (Join-Path $Root "spool\state\$Kind") -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        try {
+            $item = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            $at = [datetimeoffset]::Parse([string](Get-CfnProperty $item $Timestamp ''))
+            if ($at -ge [datetimeoffset]::UtcNow.AddHours(-$TtlHours)) { $active++ }
+        } catch {}
+    }
+    return $active
 }
 
 function Get-CfnGuiStatus {
@@ -632,9 +636,10 @@ function Get-CfnGuiStatus {
     } else { 0 }
     $pendingCount = @(Get-ChildItem -LiteralPath (Join-Path $InstallRoot 'spool\pending') -Filter '*.json' -File -ErrorAction SilentlyContinue).Count
     $suppressedCount = @(Get-ChildItem -LiteralPath (Join-Path $InstallRoot 'spool\suppressed') -Filter '*.json' -File -ErrorAction SilentlyContinue).Count
-    $waitingCount = @(Get-ChildItem -LiteralPath (Join-Path $InstallRoot 'spool\state\waiting') -Filter '*.json' -File -ErrorAction SilentlyContinue).Count
-    $completionArmCount = @(Get-ChildItem -LiteralPath (Join-Path $InstallRoot 'spool\state\completion') -Filter '*.json' -File -ErrorAction SilentlyContinue).Count
-    $readySessionCount = @(Get-ChildItem -LiteralPath (Join-Path $InstallRoot 'spool\state\ready') -Filter '*.json' -File -ErrorAction SilentlyContinue).Count
+    $waitingCount = 0
+    $completionArmCount = 0
+    $readySessionCount = 0
+    $configProblem = ''
     $settingsPath = Join-Path $InstallRoot 'settings.local.json'
     $feishuEnabled = $true
     $runtimeSettings = $null
@@ -644,9 +649,12 @@ function Get-CfnGuiStatus {
             $runtimeSettings = Get-CfnSettings $InstallRoot
             $feishuEnabled = [bool]$runtimeSettings.FeishuEnabled
             $deliveryControl = Get-CfnDeliveryControlState $InstallRoot $runtimeSettings
-        } catch {}
+            $waitingCount = Get-CfnGuiActiveStateCount $InstallRoot 'waiting' 'waiting_at' $runtimeSettings.WaitingStateTtlHours
+            $completionArmCount = Get-CfnGuiActiveStateCount $InstallRoot 'completion' 'armed_at' ($runtimeSettings.CompletionArmTtlMinutes / 60.0)
+            $readySessionCount = Get-CfnGuiActiveStateCount $InstallRoot 'ready' 'ready_at' $runtimeSettings.ReadyStateTtlHours
+        } catch { $configProblem = $_.Exception.Message }
     }
-    $hooksPath = Join-Path $env:USERPROFILE '.codex\hooks.json'
+    $hooksPath = Join-Path (Get-CfnCodexHome $InstallRoot) 'hooks.json'
     $lifecycleHookCount = 0
     if (Test-Path -LiteralPath $hooksPath -PathType Leaf) {
         try {
@@ -682,10 +690,40 @@ function Get-CfnGuiStatus {
         } catch {}
     }
 
+    $lastDelivery = $null
+    $lastEvent = $null
+    foreach ($entry in @(@('delivery-result.json', 'lastDelivery'), @('last-event.json', 'lastEvent'))) {
+        $path = Join-Path $InstallRoot ('spool\state\' + $entry[0])
+        if (Test-Path -LiteralPath $path) { try { Set-Variable -Name $entry[1] -Value (Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json) } catch {} }
+    }
+    $scheduleEnabled = [bool]($task -and [string]$task.State -ne 'Disabled' -and $null -ne $deliveryControl -and $deliveryControl.Reason -ne 'schedule_disabled')
+    $problem = if (-not (Test-Path -LiteralPath $settingsPath)) { '尚未安装：填写配置后使用维护项“安装通知”。' }
+        elseif ($configProblem) { '配置读取失败：' + $configProblem }
+        elseif (-not $task) { '计划任务缺失：请使用维护项“安装通知”修复。' }
+        elseif (-not $scheduleEnabled) { '运行计划已关闭；待发送项保留，不会投递。' }
+        elseif (-not $feishuEnabled) { '飞书通知已关闭；PC 通知不受影响。' }
+        elseif ($deliveryControl.Reason -eq 'manual_pause') { '已临时暂停；到期恢复，也可点击“马上开始”。' }
+        elseif (-not $deliveryControl.EffectiveActive) { '当前不在运行时段，等待下次允许发送。' }
+        elseif (-not (Find-CfnLarkCli $runtimeSettings.LarkCliPath)) { '未找到 lark-cli：请在飞书连接页指定路径。' }
+        elseif ($pendingCount -gt 0 -and (Get-CfnProperty $lastDelivery 'status' '') -in @('blocked', 'unconfirmed')) {
+            '投递未确认，队列已保留：' + [string](Get-CfnProperty $lastDelivery 'reason' '')
+        }
+        elseif ($pendingCount -gt 0) { '允许投递；待发送项将在计划任务下次触发时处理。' }
+        else { '允许投递，正在等待新的合格通知。' }
+    $nextEligible = if ($scheduleEnabled -and $feishuEnabled -and $null -ne $deliveryControl) {
+        if ($deliveryControl.EffectiveActive) { Get-Date } else { $deliveryControl.NextScheduleStart }
+    } else { $null }
+
     [pscustomobject]@{
         TaskExists = [bool]$task
         State = if ($task) { [string]$task.State } else { 'Missing' }
-        ScheduleEnabled = [bool]($task -and [string]$task.State -ne 'Disabled')
+        Summary = $problem
+        NextEligibleAt = $nextEligible
+        LastSuccessAt = Get-CfnProperty $lastDelivery 'last_success_at' ''
+        LastMessageId = Get-CfnProperty $lastDelivery 'last_message_id' ''
+        LastEventReason = if ($null -ne $lastEvent) { [string](Get-CfnProperty $lastEvent 'status' '') + ' ' + [string](Get-CfnProperty $lastEvent 'detail' '') } else { '暂无过滤记录' }
+        LastEvent = $lastEvent
+        ScheduleEnabled = $scheduleEnabled
         FeishuEnabled = $feishuEnabled
         ScheduledNow = [bool]($null -ne $deliveryControl -and $deliveryControl.ScheduledActive)
         DeliveryActive = [bool]($task -and [string]$task.State -ne 'Disabled' -and $null -ne $deliveryControl -and $deliveryControl.EffectiveActive)

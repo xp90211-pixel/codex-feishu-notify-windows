@@ -25,6 +25,26 @@ jobs:
         shell: powershell
         run: ./tests/Test-Project.ps1
 
+      - name: Reliability on PowerShell 7
+        shell: pwsh
+        run: ./tests/Test-Reliability.ps1
+
+      - name: Reliability on Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/Test-Reliability.ps1
+
+      - name: Install transactions on PowerShell 7
+        shell: pwsh
+        run: ./tests/Test-InstallTransaction.ps1
+
+      - name: Install transactions on Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/Test-InstallTransaction.ps1
+
+      - name: Task Scheduler manual controls
+        shell: pwsh
+        run: ./tests/Test-ManualTaskControl.ps1
+
       - name: Build and smoke-test the one-click installer
         shell: pwsh
         run: ./tests/Test-OneClickInstaller.ps1 -Version 0.0.0-ci

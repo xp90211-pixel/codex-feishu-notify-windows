@@ -1,6 +1,6 @@
 # Third-party notices
 
-This project contains independently adapted implementation ideas from the following MIT-licensed projects. The upstream projects are not bundled, installed, or invoked at runtime.
+This project contains independently adapted implementation ideas from the following MIT-licensed projects. The design-reference projects listed below are not bundled, installed, or invoked at runtime.
 
 - `ysjh0014/afk-notify` at commit `8a9e548e5714d7523efa2a7e96d755a3e5278c3b`: Windows WinRT toast, persistent waiting notification, tag-based dismissal, and conflict-safe setup patterns. Copyright (c) 2026 afk-notify contributors.
 - `Edric-D0401/codex-feishu-notify` at commit `c9ea7da1a401e2179a670298e42def17aeb71563`: two-stage completion gating, fail-closed event handling, privacy boundaries, preflight, and rollback patterns. Copyright (c) 2026 Edric-D0401.
@@ -8,6 +8,10 @@ This project contains independently adapted implementation ideas from the follow
 - `Mo-ZheHan/feishu-bridge` at commit `17e427070a38b0eb797f983346598bb784c74132`: Feishu card layout and state-routing concepts. Copyright (c) 2026 Mo-ZheHan (FeishuBridge).
 
 No code was copied from `XiaoQi-0914/Codex-Feishu-Notify`, because the reviewed repository did not include a license file.
+
+## Bundled dependency: Tommy 3.1.2
+
+The offline management tools bundle the unmodified .NET 3.5 build of [Tommy](https://github.com/dezhidki/Tommy), a TOML parser. Copyright (c) 2020 Denis Zhidkikh. MIT license and package provenance/hash are included in [src/vendor](src/vendor/README.md). No package manager or network access is needed at installation time.
 
 ## MIT License
 

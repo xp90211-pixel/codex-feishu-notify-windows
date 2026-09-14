@@ -27,3 +27,11 @@ The one-click Release installer runs per-user with `asInvoker`, embeds the same 
 Lifecycle hooks are notification-only. They must not return `allow`, `deny`, `block`, updated permissions, arbitrary input, or automatic continuation instructions. The strict completion gate prevents ordinary accidental completion reports; it is not cryptographic authentication against another process running as the same Windows user.
 
 Feishu card callbacks, remote approvals, and terminal input require a separate listener and a stronger authorization boundary. They are intentionally disabled; see `docs/remote-control-evaluation.md`.
+
+## v0.6 safety boundaries
+
+New installations keep task/result previews disabled; upgrades preserve explicit existing choices. Redaction is best-effort, not a guarantee that business-sensitive content is safe to share. Raw transport stdout/stderr is not written to logs. An explicit receipt is required before removing a pending item.
+
+Disabling delivery prevents subsequent submissions but cannot retract requests already submitted to Feishu. Unknown desktop state schemas fail closed; desktop registration is a heuristic filter, never an authorization boundary. Permission events without a stable provider request ID cannot be perfectly correlated under arbitrary reordering; ambiguous resolution leaves state until turn/session cleanup or expiry.
+
+Release archives are checked against an individual-file allowlist and scanned before publication. The unsigned setup EXE still requires the user to verify origin and SHA-256. Backups are retained locally and may contain previous credentials or sensitive configuration; protect or remove them deliberately.

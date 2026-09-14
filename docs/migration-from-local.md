@@ -1,74 +1,34 @@
 # 从现有本机版本迁移
 
-本指南适用于已经存在 `Codex.LarkNotify.codex`、`lark-channel-notify/notify.ps1` 和 `drain.ps1` 的电脑。迁移期间不要让新旧两个任务同时正式发送。
+v0.6 建议保留原来的安装目录与任务名，通过新版设置器中的“安装通知”做原地升级。不要同时启用两个指向同一飞书会话的通知任务。
 
-## 1. 备份现状
+## 从 v0.5 升级
 
-```powershell
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$backup = Join-Path $PWD "migration-backup-$stamp"
-New-Item -ItemType Directory -Path $backup | Out-Null
+1. 核对 Release 的 setup EXE 哈希并运行，或解压新版 ZIP。
+2. 打开新版设置器，核对目标目录和计划任务名称（通常为 Codex.LarkNotify.codex）。
+3. 核对已读取的私有设置，再点击“安装通知”。安装器先预检、备份，失败时恢复部署前文件和任务。
+4. 重新打开 Codex，审查并信任变化的 Hook；日常修改使用“保存设置”，无需再次安装。
+5. 通过“检查配置”查看路径、计划和连接条件。需要真实端到端验证时，由你确认“发送测试通知”。
 
-Export-ScheduledTask -TaskName 'Codex.LarkNotify.codex' |
-  Set-Content -LiteralPath (Join-Path $backup 'Codex.LarkNotify.codex.xml') -Encoding Unicode
+只打开新版管理程序不会更新运行脚本。升级保留未指定配置；新安装默认关闭摘要，已开启摘要的旧配置不会被自动关闭。建议敏感环境复核摘要开关。
 
-Copy-Item "$env:USERPROFILE\.codex\config.toml" $backup
-Copy-Item "$env:USERPROFILE\.codex\integrations\lark-channel-notify\notify.ps1" $backup
-Copy-Item "$env:USERPROFILE\.codex\integrations\lark-channel-notify\drain.ps1" $backup
-```
+## 从早期脚本版迁移
 
-不要把这个备份目录提交 Git；它可能包含真实路径和会话标识。
+设置器可以从原 drain.ps1 读取旧参数。先自行保存旧任务 XML、Codex 配置和旧运行目录的备份，备份可能含敏感数据，不要提交 Git。
 
-## 2. 记录私有配置
+核对界面中原安装目录与任务名后，用“安装通知”原地迁移。CLI 也可显式传入原 InstallRoot 与 TaskName；不传这些参数可能创建不同的默认安装，不能用来猜测迁移目标。
 
-从旧 `drain.ps1` 本地读取目标 `chat_id`、Lark channel home 和 profile。只在安装命令或 `settings.local.json` 中使用，不要粘贴到 Issue、PR 或 README。
+如果必须改用新目录，应先停用旧任务，并确认不会再有旧的直接排空进程，之后才部署新任务。不要把旧队列整体复制过去；逐项检查以避免重复通知。
 
-## 3. 安装新版本
+## 检查要点
 
-```powershell
-pwsh -File .\scripts\Install.ps1 `
-  -ChatId 'oc_YOUR_REAL_ID' `
-  -LarkChannelProfile 'codex' `
-  -ScheduleStart '18:40' `
-  -ScheduleEnd '02:00' `
-  -HolidayRegion SG
-```
+- root notify 仍为有效 TOML 字符串数组，其他配置保留；多行数组和中文路径受支持。
+- 计划为每日 18:40–02:00，重复 PT1M / PT7H20M；日期与每周补齐按实际选择生成。
+- 禁止按需启动与错过后补跑，最多 47 个持久触发器。
+- PC Toast 与飞书开关相互独立；关闭飞书不需要有效的飞书连接信息。
+- DryRun 仅查看本地队列，完全不改变文件，也不测试 profile 认证。
+- 真实连接须由用户发送固定内容的测试消息，不自动授权或扫码。
 
-如果顶层 Codex 通知由其他包装器管理，而旧飞书脚本位于 `--previous-notify` 中，安装器会替换下游脚本并保留包装器。安装器不会主动启动新计划任务。
+安装失败会报告是否自动恢复完成及备份位置。若提示恢复需要人工处理，保持通知关闭，核对备份后再决定恢复范围，不要盲目删除原目录或别的任务。
 
-## 4. 只读检查和 dry run
-
-```powershell
-pwsh -File .\scripts\Test-Configuration.ps1
-pwsh -File "$env:USERPROFILE\.codex\integrations\codex-feishu-notify\drain.ps1" -DryRun
-```
-
-确认以下项目：
-
-- 恰好有一个 `MSFT_TaskDailyTrigger`；
-- `DaysInterval=1`；
-- 重复为 `PT1M / PT7H20M`；
-- 启用新加坡日历时，每个未来节假日有一个 `MSFT_TaskTimeTrigger`，默认重复为 `PT1M / PT16H40M`；
-- `StartWhenAvailable=False`；
-- `AllowDemandStart=False`；
-- `config.toml` 仍保留 PC 端需要的通知包装器；
-- dry run 能找到正确的专用 Lark profile。
-
-另请核对 `holidays.local.json` 的地区、年份和官方来源。普通周末不会因为启用节假日功能而全天运行。
-
-## 5. 停用旧任务
-
-完成上一步后，先进行可恢复的停用：
-
-```powershell
-Disable-ScheduledTask -TaskName 'Codex.LarkNotify.codex'
-```
-
-观察一个完整运行窗口，确认没有重复消息和漏发。需要回滚时：
-
-```powershell
-Enable-ScheduledTask -TaskName 'Codex.LarkNotify.codex'
-pwsh -File .\scripts\Uninstall.ps1
-```
-
-稳定后再人工决定是否注销旧任务和归档旧目录。不要迁移旧日志；未发送队列项也应逐项检查，避免在新旧系统中重复发送。
+设置 CODEX_HOME 时，安装、诊断和运行期读取均使用相应目录；已有安装的诊断和管理工具也会读取安装记录中的 Codex 路径。跨电脑迁移应重新安装并重新选择当地的 profile，不复制私有身份配置。

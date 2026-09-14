@@ -32,6 +32,26 @@ jobs:
         shell: pwsh
         run: ./tests/Test-Project.ps1
 
+      - name: Reliability on PowerShell 7
+        shell: pwsh
+        run: ./tests/Test-Reliability.ps1
+
+      - name: Reliability on Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/Test-Reliability.ps1
+
+      - name: Install transactions on PowerShell 7
+        shell: pwsh
+        run: ./tests/Test-InstallTransaction.ps1
+
+      - name: Install transactions on Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/Test-InstallTransaction.ps1
+
+      - name: Task Scheduler manual controls
+        shell: pwsh
+        run: ./tests/Test-ManualTaskControl.ps1
+
       - name: Build and smoke-test installer
         shell: pwsh
         run: ./tests/Test-OneClickInstaller.ps1 -Version 0.0.0-release-ci
@@ -64,9 +84,9 @@ jobs:
             gh release upload $tag @assets --clobber --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to upload release assets.' }
             $prereleaseValue = $isPrerelease.ToString().ToLowerInvariant()
-            gh release edit $tag --title "$tag - One-click Windows setup" --notes-file $notes "--prerelease=$prereleaseValue" --repo $env:GITHUB_REPOSITORY
+            gh release edit $tag --title "$tag - Reliable delivery and safe upgrades" --notes-file $notes "--prerelease=$prereleaseValue" --repo $env:GITHUB_REPOSITORY
           } else {
-            $releaseArguments = @('release', 'create', $tag) + $assets + @('--verify-tag', '--title', "$tag - One-click Windows setup", '--notes-file', $notes, '--repo', $env:GITHUB_REPOSITORY)
+            $releaseArguments = @('release', 'create', $tag) + $assets + @('--verify-tag', '--title', "$tag - Reliable delivery and safe upgrades", '--notes-file', $notes, '--repo', $env:GITHUB_REPOSITORY)
             if ($isPrerelease) { $releaseArguments += '--prerelease' }
             gh @releaseArguments
           }

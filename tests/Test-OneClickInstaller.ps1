@@ -26,7 +26,7 @@ function Invoke-TestInstaller {
 
     $argumentLine = '--install-root "{0}" --no-launch --quiet' -f $installRoot.Replace('"', '\"')
     if (-not $testShortcut) { $argumentLine += ' --no-shortcut' }
-    $process = Start-Process -FilePath $InstallerPath -ArgumentList $argumentLine -Wait -PassThru
+    $process = Start-Process -FilePath $InstallerPath -ArgumentList $argumentLine -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) {
         throw "Installer smoke test exited with code $($process.ExitCode)."
     }
@@ -36,7 +36,7 @@ function Invoke-RejectedInstaller {
     param([Parameter(Mandatory = $true)] [string] $InstallerPath)
 
     $argumentLine = '--install-root "{0}" --no-launch --no-shortcut --quiet' -f $installRoot.Replace('"', '\"')
-    $process = Start-Process -FilePath $InstallerPath -ArgumentList $argumentLine -Wait -PassThru
+    $process = Start-Process -FilePath $InstallerPath -ArgumentList $argumentLine -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -eq 0) {
         throw 'An unsafe installer payload was accepted.'
     }
@@ -118,9 +118,11 @@ try {
     } finally {
         $maliciousArchive.Dispose()
     }
-    $maliciousResult = & (Join-Path $projectRoot 'scripts\New-OneClickInstaller.ps1') -Version $Version `
-        -OutputDirectory $maliciousOutput -PackagePath $maliciousPackagePath
-    Invoke-RejectedInstaller $maliciousResult.Installer
+    $rejected = $false
+    try {
+        & (Join-Path $projectRoot 'scripts\New-OneClickInstaller.ps1') -Version $Version -OutputDirectory $maliciousOutput -PackagePath $maliciousPackagePath | Out-Null
+    } catch { $rejected = $true }
+    if (-not $rejected) { throw 'The builder must reject an unsafe or unmanifested payload before embedding it.' }
     if (Test-Path -LiteralPath (Join-Path $installRoot 'escaped.txt')) {
         throw 'An unsafe installer payload wrote outside its staging directory.'
     }

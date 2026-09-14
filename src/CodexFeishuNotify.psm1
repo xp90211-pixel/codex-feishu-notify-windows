@@ -8,6 +8,10 @@ function Get-CfnProperty {
     )
 
     if ($null -ne $Object) {
+        if ($Object -is [System.Collections.IDictionary]) {
+            if ($Object.Contains($Name)) { return $Object[$Name] }
+            return $Default
+        }
         $property = $Object.PSObject.Properties[$Name]
         if ($null -ne $property) { return $property.Value }
     }
@@ -24,6 +28,23 @@ function Resolve-CfnPath {
         return Join-Path $env:USERPROFILE $expanded.Substring(2)
     }
     return $expanded
+}
+
+function Get-CfnCodexHome {
+    param([string] $IntegrationRoot = '')
+    if ($IntegrationRoot) {
+        $manifestPath = Join-Path $IntegrationRoot 'install-state.json'
+        if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([IO.Path]::GetFullPath([string]$manifest.install_root) -ieq [IO.Path]::GetFullPath($IntegrationRoot)) {
+                return Split-Path -Parent ([string]$manifest.config_path)
+            }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
+        return [IO.Path]::GetFullPath((Resolve-CfnPath $env:CODEX_HOME))
+    }
+    return Join-Path $env:USERPROFILE '.codex'
 }
 
 function Ensure-CfnDirectory {
@@ -46,11 +67,7 @@ function Write-CfnLog {
     try {
         $logRoot = Join-Path $IntegrationRoot 'logs'
         Ensure-CfnDirectory $logRoot
-        $safeDetail = ($Detail -replace '[\r\n]+', ' ')
-        $safeDetail = $safeDetail -replace '(?i)Bearer\s+[A-Za-z0-9._~+/-]+=*', 'Bearer [REDACTED]'
-        $safeDetail = $safeDetail -replace '(?i)\bsk-[A-Za-z0-9_-]{12,}\b', 'sk-[REDACTED]'
-        $safeDetail = $safeDetail -replace '(?i)(api[_-]?key|token|secret|password|webhook)\s*[:=]\s*\S+', '$1=[REDACTED]'
-        if ($safeDetail.Length -gt 300) { $safeDetail = $safeDetail.Substring(0, 300) }
+        $safeDetail = Protect-CfnPreview $Detail 300
         $entry = [ordered]@{
             at = (Get-Date).ToUniversalTime().ToString('o')
             stage = $Stage
@@ -59,7 +76,24 @@ function Write-CfnLog {
             detail = $safeDetail
         }
         $path = Join-Path $logRoot 'notify.jsonl'
-        Add-Content -LiteralPath $path -Value ($entry | ConvertTo-Json -Compress) -Encoding UTF8
+        $logLock = Enter-CfnMutex $IntegrationRoot 'log' 1000
+        if ($null -eq $logLock) { return }
+        try {
+            if ((Test-Path -LiteralPath $path) -and (Get-Item -LiteralPath $path).Length -ge 2097152) {
+                for ($i = 3; $i -ge 1; $i--) {
+                    $old = "$path.$i"
+                    if (Test-Path -LiteralPath $old) {
+                        if ($i -eq 3) { Remove-Item -LiteralPath $old -Force }
+                        else { Move-Item -LiteralPath $old -Destination "$path.$($i + 1)" -Force }
+                    }
+                }
+                Move-Item -LiteralPath $path -Destination "$path.1" -Force
+            }
+            Add-Content -LiteralPath $path -Value ($entry | ConvertTo-Json -Compress) -Encoding UTF8
+            if ($Stage -eq 'filter' -or $Status -match '(skipped|not_ready|missing|invalid)$') {
+                Write-CfnJsonAtomic (Join-Path $IntegrationRoot 'spool\state\last-event.json') $entry
+            }
+        } finally { Exit-CfnMutex $logLock }
     } catch {
         # Notification logging is best-effort and must not break Codex.
     }
@@ -104,10 +138,11 @@ function Get-CfnSettings {
         FeishuEnabled = [bool](Get-CfnProperty $transport 'enabled' $true)
         SendAttemptsPerRun = [int](Get-CfnProperty $transport 'send_attempts_per_run' 2)
         RetryDelaySeconds = [int](Get-CfnProperty $transport 'retry_delay_seconds' 2)
+        SendTimeoutSeconds = [int](Get-CfnProperty $transport 'timeout_seconds' 30)
         VisibleThreadsOnly = [bool](Get-CfnProperty $filters 'visible_threads_only' $true)
         SkipBridgeOrigin = [bool](Get-CfnProperty $filters 'skip_bridge_origin' $true)
-        IncludeTaskPreview = [bool](Get-CfnProperty $message 'include_task_preview' $true)
-        IncludeResultPreview = [bool](Get-CfnProperty $message 'include_result_preview' $true)
+        IncludeTaskPreview = [bool](Get-CfnProperty $message 'include_task_preview' $false)
+        IncludeResultPreview = [bool](Get-CfnProperty $message 'include_result_preview' $false)
         IncludePermissionTool = [bool](Get-CfnProperty $message 'include_permission_tool' $false)
         MessageFormat = [string](Get-CfnProperty $message 'format' 'card')
         DesktopEnabled = [bool](Get-CfnProperty $desktop 'enabled' $true)
@@ -120,6 +155,7 @@ function Get-CfnSettings {
         WaitingStateTtlHours = [int](Get-CfnProperty $lifecycle 'waiting_state_ttl_hours' 24)
         ReadyStateTtlHours = [int](Get-CfnProperty $lifecycle 'ready_state_ttl_hours' 720)
         ScheduleStart = [string](Get-CfnProperty $delivery 'start' '18:40')
+        ScheduleEnabled = [bool](Get-CfnProperty $delivery 'enabled' $true)
         ScheduleEnd = [string](Get-CfnProperty $delivery 'end' '02:00')
         IntervalMinutes = [int](Get-CfnProperty $delivery 'interval_minutes' 1)
         HolidayRegion = [string](Get-CfnProperty $delivery 'holiday_region' 'None')
@@ -128,8 +164,15 @@ function Get-CfnSettings {
         MaxQueueAgeHours = [int](Get-CfnProperty $delivery 'max_queue_age_hours' 24)
         SentMarkerRetentionDays = [int](Get-CfnProperty $delivery 'sent_marker_retention_days' 90)
         ExpiredItemRetentionDays = [int](Get-CfnProperty $delivery 'expired_item_retention_days' 7)
+        SuppressedItemRetentionDays = [int](Get-CfnProperty $delivery 'suppressed_item_retention_days' 7)
     }
     if ($settings.MessageFormat -notin @('text', 'card')) { throw 'Message format must be text or card.' }
+    if ($settings.SendTimeoutSeconds -lt 1 -or $settings.SendTimeoutSeconds -gt 120) { throw 'Send timeout must be between 1 and 120 seconds.' }
+    if ($settings.IntervalMinutes -lt 1 -or $settings.IntervalMinutes -gt 60) { throw 'Interval must be between 1 and 60 minutes.' }
+    if ($settings.MaxQueueAgeHours -lt 1 -or $settings.MaxQueueAgeHours -gt 720) { throw 'Queue age must be between 1 and 720 hours.' }
+    foreach ($retention in @($settings.SentMarkerRetentionDays, $settings.ExpiredItemRetentionDays, $settings.SuppressedItemRetentionDays)) {
+        if ($retention -lt 1 -or $retention -gt 3650) { throw 'Retention must be between 1 and 3650 days.' }
+    }
     if ($settings.SendAttemptsPerRun -lt 1 -or $settings.SendAttemptsPerRun -gt 5) { throw 'Send attempts per run must be between 1 and 5.' }
     if ($settings.RetryDelaySeconds -lt 0 -or $settings.RetryDelaySeconds -gt 30) { throw 'Retry delay must be between 0 and 30 seconds.' }
     if ($settings.CompletionArmTtlMinutes -lt 1 -or $settings.CompletionArmTtlMinutes -gt 60) { throw 'Completion arm TTL must be between 1 and 60 minutes.' }
@@ -157,6 +200,26 @@ function ConvertTo-CfnIsoDuration {
     return $value
 }
 
+function Protect-CfnJsonValue {
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $copy = [ordered]@{}
+        foreach ($key in @($Value.Keys)) {
+            $copy[$key] = if ([string]$key -match '^(?i:api[_-]?key|(?:access[_-]?|refresh[_-]?|auth[_-]?)?token|(?:app[_-]?|client[_-]?)?secret|password|passwd|webhook|authorization)$') { '[REDACTED]' }
+                else { Protect-CfnJsonValue $Value[$key] }
+        }
+        return $copy
+    }
+    if ($Value -is [pscustomobject]) {
+        $copy = [ordered]@{}
+        foreach ($property in $Value.PSObject.Properties) { $copy[$property.Name] = $property.Value }
+        return Protect-CfnJsonValue $copy
+    }
+    if ($Value -is [array]) { return ,@($Value | ForEach-Object { Protect-CfnJsonValue $_ }) }
+    return $Value
+}
+
 function Protect-CfnPreview {
     param(
         [AllowEmptyString()] [string] $Text,
@@ -164,10 +227,15 @@ function Protect-CfnPreview {
     )
 
     if ($null -eq $Text) { return '' }
+    if ($Text.TrimStart().StartsWith('{') -or $Text.TrimStart().StartsWith('[')) {
+        try { $Text = Protect-CfnJsonValue ($Text | ConvertFrom-Json -ErrorAction Stop) | ConvertTo-Json -Compress -Depth 50 } catch {}
+    }
     $value = ($Text -replace '[\x00-\x1f]+', ' ' -replace '\s+', ' ').Trim()
     $value = $value -replace '(?i)Bearer\s+[A-Za-z0-9._~+/-]+=*', 'Bearer [REDACTED]'
     $value = $value -replace '(?i)\bsk-[A-Za-z0-9_-]{12,}\b', 'sk-[REDACTED]'
-    $value = $value -replace '(?i)(api[_-]?key|token|secret|password|webhook)\s*[:=]\s*\S+', '$1=[REDACTED]'
+    $sensitive = '(?:api[_-]?key|(?:access[_-]?|refresh[_-]?|auth[_-]?)?token|(?:app[_-]?|client[_-]?)?secret|password|passwd|webhook|authorization)'
+    # JSON / quoted keys and quoted values (including escaped characters).
+    $value = $value -replace ('(?i)(["'']?' + $sensitive + '["'']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|''(?:\\.|[^''\\])*''|[^\s,;}]+)'), '$1"[REDACTED]"'
     $value = $value -replace '\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b', '[REDACTED_JWT]'
     if ($value.Length -gt $Limit) { return $value.Substring(0, $Limit) + '...' }
     return $value
@@ -190,17 +258,34 @@ function Test-CfnInternalPrompt {
 function Test-CfnVisibleThread {
     param(
         [AllowEmptyString()] [string] $ThreadId,
-        [string] $StatePath = (Join-Path $env:USERPROFILE '.codex\.codex-global-state.json')
+        [string] $StatePath = (Join-Path (Get-CfnCodexHome $PSScriptRoot) '.codex-global-state.json')
     )
 
     if ([string]::IsNullOrWhiteSpace($ThreadId)) { return $false }
     if (-not (Test-Path -LiteralPath $StatePath)) { return $false }
     try {
-        $stateText = Get-Content -LiteralPath $StatePath -Raw
-        $quotedId = '"' + $ThreadId + '"'
-        $referenceKey = '"thread-reference-capability:' + $ThreadId + '"'
-        return ($stateText.IndexOf($quotedId, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) -or
-               ($stateText.IndexOf($referenceKey, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+        $document = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $containers = @($document, (Get-CfnProperty $document 'electron-persisted-atom-state' $null))
+        # An explicit denial anywhere wins over a stale title/cache entry.
+        foreach ($container in $containers) {
+            $capability = Get-CfnProperty $container ('thread-reference-capability:' + $ThreadId) $null
+            if ($capability -is [bool] -and -not $capability) { return $false }
+        }
+        foreach ($container in $containers) {
+            if ($null -eq $container) { continue }
+            $capability = Get-CfnProperty $container ('thread-reference-capability:' + $ThreadId) $null
+            if ($capability -is [bool]) { return $capability }
+            foreach ($key in @('thread-titles', 'thread-title-cache')) {
+                $titles = Get-CfnProperty $container $key $null
+                if ($null -ne (Get-CfnProperty $titles $ThreadId $null)) { return $true }
+                $byId = Get-CfnProperty $titles 'titles' $null
+                if ($null -ne (Get-CfnProperty $byId $ThreadId $null)) { return $true }
+            }
+            foreach ($key in @('pinned-thread-ids', 'thread-order')) {
+                if (@(Get-CfnProperty $container $key @()) -contains $ThreadId) { return $true }
+            }
+        }
+        return $false
     } catch {
         return $false
     }
@@ -229,8 +314,12 @@ function Write-CfnJsonAtomic {
     $tempPath = '{0}.{1}.{2}.tmp' -f $Path, $PID, ([guid]::NewGuid().ToString('N'))
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     try {
-        [System.IO.File]::WriteAllText($tempPath, ($Value | ConvertTo-Json -Depth 8 -Compress), $utf8NoBom)
-        Move-Item -LiteralPath $tempPath -Destination $Path -Force
+        [System.IO.File]::WriteAllText($tempPath, ($Value | ConvertTo-Json -Depth 50 -Compress), $utf8NoBom)
+        if ([IO.File]::Exists($Path)) { [IO.File]::Replace($tempPath, $Path, [NullString]::Value) }
+        else {
+            try { [IO.File]::Move($tempPath, $Path) }
+            catch { if ([IO.File]::Exists($Path)) { [IO.File]::Replace($tempPath, $Path, [NullString]::Value) } else { throw } }
+        }
     } finally {
         Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
     }
@@ -376,16 +465,21 @@ function Set-CfnWaitingState {
         [Parameter(Mandatory = $true)] [string] $IntegrationRoot,
         [Parameter(Mandatory = $true)] [string] $SessionId,
         [Parameter(Mandatory = $true)] [string] $EventId,
-        [Parameter(Mandatory = $true)] [string] $ToastTag
+        [Parameter(Mandatory = $true)] [string] $ToastTag,
+        $Identity = $null
     )
 
     if ([string]::IsNullOrWhiteSpace($SessionId)) { return $false }
-    $path = Get-CfnStateFile $IntegrationRoot 'waiting' $SessionId
+    $path = Join-Path $IntegrationRoot "spool\state\waiting\$EventId.json"
     Write-CfnJsonAtomic $path ([ordered]@{
-        schema = 1
+        schema = 2
         session_id = $SessionId
         event_id = $EventId
         toast_tag = $ToastTag
+        request_id = [string](Get-CfnProperty $Identity 'RequestId' '')
+        input_hash = [string](Get-CfnProperty $Identity 'InputHash' '')
+        tool_name = [string](Get-CfnProperty $Identity 'ToolName' '')
+        turn_id = [string](Get-CfnProperty $Identity 'TurnId' '')
         waiting_at = [datetimeoffset]::UtcNow.ToString('o')
     })
     return $true
@@ -395,16 +489,41 @@ function Resolve-CfnWaitingState {
     param(
         [Parameter(Mandatory = $true)] [string] $IntegrationRoot,
         [Parameter(Mandatory = $true)] [string] $SessionId,
-        [ValidateRange(1, 168)] [int] $TtlHours = 24
+        [ValidateRange(1, 168)] [int] $TtlHours = 24,
+        $ToolEvent = $null,
+        [string] $TurnId = ''
     )
 
     $result = [ordered]@{ Found = $false; EventId = ''; PendingRemoved = $false; ToastRemoved = $false; Stale = $false }
     if ([string]::IsNullOrWhiteSpace($SessionId)) { return [pscustomobject]$result }
-    $path = Get-CfnStateFile $IntegrationRoot 'waiting' $SessionId
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return [pscustomobject]$result }
-    try {
-        $record = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([string](Get-CfnProperty $record 'session_id' '') -ne $SessionId) { return [pscustomobject]$result }
+    $identity = if ($null -ne $ToolEvent) { Get-CfnRequestIdentity $ToolEvent } else { $null }
+    if ($null -ne $identity -and $identity.RequestId) {
+        $key = Get-CfnEventId ("request|$SessionId|$($identity.TurnId)|$($identity.RequestId)")
+        Write-CfnJsonAtomic (Join-Path $IntegrationRoot "spool\state\resolved\$key.json") @{ resolved_at = [datetimeoffset]::UtcNow.ToString('o') }
+    }
+    $candidates = New-Object System.Collections.Generic.List[object]
+    foreach ($file in @(Get-ChildItem -LiteralPath (Join-Path $IntegrationRoot 'spool\state\waiting') -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        try {
+            $record = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string](Get-CfnProperty $record 'session_id' '') -cne $SessionId) { continue }
+            if ($TurnId -and [string](Get-CfnProperty $record 'turn_id' '') -and $record.turn_id -cne $TurnId) { continue }
+            if ($null -ne $identity) {
+                if ([string](Get-CfnProperty $record 'turn_id' '') -cne $identity.TurnId -or
+                    [string](Get-CfnProperty $record 'tool_name' '') -cne $identity.ToolName) { continue }
+                $recordRequest = [string](Get-CfnProperty $record 'request_id' '')
+                if ($recordRequest) {
+                    if (-not $identity.RequestId -or $recordRequest -cne $identity.RequestId) { continue }
+                } elseif (-not $identity.InputHash -or [string](Get-CfnProperty $record 'input_hash' '') -cne $identity.InputHash) { continue }
+            }
+            $candidates.Add([pscustomobject]@{ File = $file; Record = $record })
+        } catch { Write-CfnLog $IntegrationRoot 'state' 'waiting_resolve_failed' '' $_.Exception.Message }
+    }
+    if ($null -ne $identity -and $candidates.Count -gt 1) { return [pscustomobject]$result }
+    foreach ($candidate in $candidates) {
+      try {
+        $record = $candidate.Record
+        $path = $candidate.File.FullName
+        if ([string](Get-CfnProperty $record 'event_id' '') -notmatch '^[0-9a-f]{40}$') { continue }
         $result.Found = $true
         $result.EventId = [string](Get-CfnProperty $record 'event_id' '')
         $waitingAt = [datetimeoffset]::Parse([string](Get-CfnProperty $record 'waiting_at' ''))
@@ -418,9 +537,13 @@ function Resolve-CfnWaitingState {
         }
         $tag = [string](Get-CfnProperty $record 'toast_tag' '')
         if ($tag) { $result.ToastRemoved = [bool](Remove-CfnToast -Tag $tag) }
+        if ([string](Get-CfnProperty $record 'request_id' '')) {
+            Write-CfnJsonAtomic (Join-Path $IntegrationRoot "spool\state\resolved\$($result.EventId).json") @{ resolved_at = [datetimeoffset]::UtcNow.ToString('o') }
+        }
         Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-    } catch {
+      } catch {
         Write-CfnLog $IntegrationRoot 'state' 'waiting_resolve_failed' '' $_.Exception.Message
+      }
     }
     return [pscustomobject]$result
 }
@@ -663,8 +786,11 @@ function Get-CfnManualDeliveryStatePath {
 function Clear-CfnManualDeliveryState {
     param([Parameter(Mandatory = $true)] [string] $IntegrationRoot)
 
-    $path = Get-CfnManualDeliveryStatePath $IntegrationRoot
-    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    $stateLock = Enter-CfnMutex $IntegrationRoot 'state'
+    try {
+        $path = Get-CfnManualDeliveryStatePath $IntegrationRoot
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    } finally { Exit-CfnMutex $stateLock }
 }
 
 function Set-CfnManualDeliveryState {
@@ -676,6 +802,8 @@ function Set-CfnManualDeliveryState {
     )
 
     if ($ExpiresAt -le $Now) { throw 'Manual delivery override must expire in the future.' }
+    $stateLock = Enter-CfnMutex $IntegrationRoot 'state'
+    try {
     $path = Get-CfnManualDeliveryStatePath $IntegrationRoot
     Write-CfnJsonAtomic $path ([ordered]@{
         schema = 1
@@ -684,6 +812,7 @@ function Set-CfnManualDeliveryState {
         expires_at = $ExpiresAt.ToUniversalTime().ToString('o')
     })
     return Get-CfnManualDeliveryState $IntegrationRoot -Now $Now
+    } finally { Exit-CfnMutex $stateLock }
 }
 
 function Get-CfnManualDeliveryState {
@@ -700,7 +829,6 @@ function Get-CfnManualDeliveryState {
         if ($mode -notin @('force', 'pause')) { throw 'Unknown manual delivery mode.' }
         $expiresAt = [datetimeoffset]::Parse([string](Get-CfnProperty $record 'expires_at' '')).ToUniversalTime()
         if ($expiresAt -le $Now.ToUniversalTime()) {
-            Clear-CfnManualDeliveryState $IntegrationRoot
             return $null
         }
         return [pscustomobject]@{
@@ -710,10 +838,7 @@ function Get-CfnManualDeliveryState {
             Path = $path
         }
     } catch {
-        # A corrupt or stale override must never leave delivery permanently on
-        # or off. Remove it and fall back to the saved schedule.
-        Clear-CfnManualDeliveryState $IntegrationRoot
-        return $null
+        throw 'Invalid manual delivery state; repair or clear it in the settings UI.'
     }
 }
 
@@ -801,6 +926,13 @@ function Get-CfnDeliveryControlState {
     } else {
         'outside_schedule'
     }
+    $enabled = [bool](Get-CfnProperty $Settings 'ScheduleEnabled' $true)
+    $controlPath = Join-Path $IntegrationRoot 'spool\state\runtime-control.json'
+    if (Test-Path -LiteralPath $controlPath -PathType Leaf) {
+        $runtime = Get-Content -LiteralPath $controlPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $enabled = $enabled -and [bool](Get-CfnProperty $runtime 'enabled' $false)
+    }
+    if (-not $enabled) { $effective = $false; $reason = 'schedule_disabled' }
     return [pscustomobject]@{
         ScheduledActive = [bool]$scheduled
         EffectiveActive = [bool]$effective
@@ -815,7 +947,10 @@ function Find-CfnLarkCli {
     param([AllowEmptyString()] [string] $ExplicitPath = '')
 
     $resolved = Resolve-CfnPath $ExplicitPath
-    if ($resolved -and (Test-Path -LiteralPath $resolved -PathType Leaf)) { return $resolved }
+    if ($resolved) {
+        if (Test-Path -LiteralPath $resolved -PathType Leaf) { return $resolved }
+        return $null
+    }
 
     foreach ($name in @('lark-cli.exe', 'lark-cli.cmd', 'lark-cli.ps1', 'lark-cli')) {
         $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -854,13 +989,7 @@ function Initialize-CfnLarkProfile {
         throw "Lark channel profile is not ready: $profileRoot"
     }
 
-    $env:LARK_CHANNEL = '1'
-    $env:LARK_CHANNEL_HOME = $Settings.LarkChannelHome
-    $env:LARK_CHANNEL_PROFILE = $Settings.LarkChannelProfile
-    $env:LARK_CHANNEL_CONFIG = $sourceConfig
-    $env:LARKSUITE_CLI_CONFIG_DIR = $cliConfigDir
-    $env:LARKSUITE_CLI_NO_UPDATE_NOTIFIER = '1'
-    $env:LARKSUITE_CLI_NO_SKILLS_NOTIFIER = '1'
+    # Authentication overrides are scoped to the transport child, never the GUI process.
 }
 
 function New-CfnMessage {
@@ -871,21 +1000,21 @@ function New-CfnMessage {
 
     $kind = [string](Get-CfnProperty $QueueItem 'kind' 'completed')
     $title = if ($kind -eq 'needs-input') {
-        ([string]::Concat([char]0x1F7E0, ' Codex 等待授权'))
+        ([string]::Concat([char]::ConvertFromUtf32(0x1F7E0), ' Codex 等待授权'))
     } else {
         ([string]::Concat([char]0x2705, ' Codex 任务完成'))
     }
     $lines = @(
         $title,
-        ('Workspace: {0}' -f [string](Get-CfnProperty $QueueItem 'project' 'Unknown workspace'))
+        ('Workspace: {0}' -f (Protect-CfnPreview ([string](Get-CfnProperty $QueueItem 'project' 'Unknown workspace')) 100))
     )
-    $taskPreview = [string](Get-CfnProperty $QueueItem 'task_preview' '')
-    $resultPreview = [string](Get-CfnProperty $QueueItem 'result_preview' '')
+    $taskPreview = Protect-CfnPreview ([string](Get-CfnProperty $QueueItem 'task_preview' '')) 300
+    $resultPreview = Protect-CfnPreview ([string](Get-CfnProperty $QueueItem 'result_preview' '')) 600
     if ($Settings.IncludeTaskPreview -and $taskPreview) { $lines += "Task: $taskPreview" }
     if ($Settings.IncludeResultPreview -and $resultPreview) { $lines += "Result: $resultPreview" }
     $permissionTool = [string](Get-CfnProperty $QueueItem 'permission_tool' '')
     if ($kind -eq 'needs-input' -and $Settings.IncludePermissionTool -and $permissionTool) {
-        $lines += "Tool: $permissionTool"
+        $lines += "Tool: $(Protect-CfnPreview $permissionTool 80)"
     }
     return $lines -join [Environment]::NewLine
 }
@@ -901,8 +1030,8 @@ function New-CfnCardContent {
     $template = if ($kind -eq 'needs-input') { 'orange' } else { 'green' }
     $lines = New-Object System.Collections.Generic.List[string]
     $lines.Add(('**工作区：** {0}' -f (Protect-CfnPreview ([string](Get-CfnProperty $QueueItem 'project' 'Unknown workspace')) 100)))
-    $taskPreview = [string](Get-CfnProperty $QueueItem 'task_preview' '')
-    $resultPreview = [string](Get-CfnProperty $QueueItem 'result_preview' '')
+    $taskPreview = Protect-CfnPreview ([string](Get-CfnProperty $QueueItem 'task_preview' '')) 300
+    $resultPreview = Protect-CfnPreview ([string](Get-CfnProperty $QueueItem 'result_preview' '')) 600
     $permissionTool = [string](Get-CfnProperty $QueueItem 'permission_tool' '')
     if ($Settings.IncludeTaskPreview -and $taskPreview) { $lines.Add("**任务：** $taskPreview") }
     if ($Settings.IncludeResultPreview -and $resultPreview) { $lines.Add("**结果：** $resultPreview") }
@@ -966,7 +1095,7 @@ function Test-CfnTransportOutput {
     }
     $trimmed = $Output.Trim()
     if (-not $trimmed) {
-        return [pscustomobject]@{ Success = $true; Reason = 'exit=0' }
+        return [pscustomobject]@{ Success = $false; Reason = 'unconfirmed_empty_output'; MessageId = '' }
     }
     try {
         $value = $trimmed | ConvertFrom-Json
@@ -984,9 +1113,15 @@ function Test-CfnTransportOutput {
         if ($null -ne $errorProperty -and $errorProperty.Value) {
             return [pscustomobject]@{ Success = $false; Reason = 'error returned' }
         }
-        return [pscustomobject]@{ Success = $true; Reason = 'json_ok' }
+        $code = Get-CfnProperty $value 'code' $null
+        $data = Get-CfnProperty $value 'data' $null
+        $messageId = [string](Get-CfnProperty $data 'message_id' '')
+        if ($null -ne $code -and ($code -is [int] -or $code -is [long]) -and $code -eq 0 -and $messageId -match '^om_[A-Za-z0-9_-]+$') {
+            return [pscustomobject]@{ Success = $true; Reason = 'confirmed_receipt'; MessageId = $messageId }
+        }
+        return [pscustomobject]@{ Success = $false; Reason = 'unconfirmed_response'; MessageId = '' }
     } catch {
-        return [pscustomobject]@{ Success = $true; Reason = 'exit=0_non_json' }
+        return [pscustomobject]@{ Success = $false; Reason = 'unconfirmed_non_json'; MessageId = '' }
     }
 }
 
@@ -997,7 +1132,234 @@ function ConvertTo-CfnTomlArray {
     return '[ ' + ($encoded -join ', ') + ' ]'
 }
 
+function ConvertTo-CfnCanonicalValue {
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary] -or $Value -is [pscustomobject]) {
+        $copy = [ordered]@{}
+        $keys = if ($Value -is [System.Collections.IDictionary]) { @($Value.Keys) } else { @($Value.PSObject.Properties.Name) }
+        foreach ($key in @($keys | Sort-Object)) { $copy[$key] = ConvertTo-CfnCanonicalValue (Get-CfnProperty $Value $key $null) }
+        return $copy
+    }
+    if ($Value -is [array]) { return ,@($Value | ForEach-Object { ConvertTo-CfnCanonicalValue $_ }) }
+    return $Value
+}
+
+function Get-CfnRequestIdentity {
+    param($Event)
+    $toolInput = Get-CfnProperty $Event 'tool_input' $null
+    $inputHash = ''
+    if ($null -ne $toolInput) {
+        $normalized = ConvertTo-CfnCanonicalValue $toolInput
+        if ($normalized -is [System.Collections.IDictionary]) { $normalized.Remove('description') }
+        if ($null -ne $normalized -and ($normalized | ConvertTo-Json -Depth 50 -Compress) -ne '{}') {
+            $inputHash = Get-CfnEventId ($normalized | ConvertTo-Json -Depth 50 -Compress)
+        }
+    }
+    return [pscustomobject]@{
+        RequestId = [string](Get-CfnProperty $Event 'tool_use_id' (Get-CfnProperty $Event 'request_id' ''))
+        InputHash = $inputHash
+        ToolName = [string](Get-CfnProperty $Event 'tool_name' '')
+        TurnId = [string](Get-CfnProperty $Event 'turn_id' '')
+    }
+}
+
+function New-CfnPermissionEventId {
+    param([string] $IntegrationRoot, [string] $SessionId, $Identity)
+    if ($Identity.RequestId) {
+        $key = Get-CfnEventId ("request|$SessionId|$($Identity.TurnId)|$($Identity.RequestId)")
+        if (Test-Path -LiteralPath (Join-Path $IntegrationRoot "spool\state\resolved\$key.json")) { return '' }
+        return $key
+    }
+    # The synchronous hook updates a local generation under the state mutex.
+    $path = Join-Path $IntegrationRoot ('spool\state\generations\' + (Get-CfnEventId $SessionId) + '.json')
+    $generation = 0L
+    $epoch = [guid]::NewGuid().ToString('N')
+    if (Test-Path -LiteralPath $path) {
+        $previous = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $generation = [long](Get-CfnProperty $previous 'generation' 0)
+        $epoch = [string](Get-CfnProperty $previous 'epoch' $epoch)
+    }
+    $generation++
+    Write-CfnJsonAtomic $path @{ generation = $generation; epoch = $epoch }
+    return Get-CfnEventId ("needs-input|$SessionId|$($Identity.TurnId)|$epoch|$generation|$($Identity.ToolName)|$($Identity.InputHash)")
+}
+
+function Test-CfnWaitingItemActive {
+    param([string] $IntegrationRoot, $QueueItem, [int] $TtlHours = 24)
+    if ([string](Get-CfnProperty $QueueItem 'kind' 'completed') -ne 'needs-input') { return $true }
+    $eventId = [string](Get-CfnProperty $QueueItem 'event_id' '')
+    if ($eventId -notmatch '^[0-9a-f]{40}$') { return $false }
+    $path = Join-Path $IntegrationRoot "spool\state\waiting\$eventId.json"
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    try {
+        $record = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        return [string]$record.event_id -ceq $eventId -and
+            [string]$record.session_id -ceq [string]$QueueItem.thread_id -and
+            [datetimeoffset]::Parse($record.waiting_at) -gt [datetimeoffset]::UtcNow.AddHours(-$TtlHours)
+    } catch { return $false }
+}
+
+function Enter-CfnMutex {
+    param([string] $IntegrationRoot, [string] $Scope = 'state', [int] $TimeoutMilliseconds = 5000)
+    $rootKey = Get-CfnEventId ([IO.Path]::GetFullPath($IntegrationRoot).TrimEnd('\', '/').ToUpperInvariant())
+    $mutex = New-Object Threading.Mutex($false, "Local\CodexFeishuNotify.$rootKey.$Scope")
+    try {
+        try { $acquired = $mutex.WaitOne($TimeoutMilliseconds) }
+        catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if ($acquired) { return $mutex }
+        $mutex.Dispose()
+        if ($Scope -eq 'state') { throw 'Notification state is busy; retry the operation.' }
+        return $null
+    } catch { $mutex.Dispose(); throw }
+}
+
+function Exit-CfnMutex {
+    param([AllowNull()] $Mutex)
+    if ($null -ne $Mutex) { try { $Mutex.ReleaseMutex() } finally { $Mutex.Dispose() } }
+}
+
+function Set-CfnDeliveryEnabled {
+    param([string] $IntegrationRoot, [bool] $Enabled)
+    $lock = Enter-CfnMutex $IntegrationRoot
+    if ($null -eq $lock) { throw 'Delivery state is busy; try again.' }
+    try {
+        $path = Join-Path $IntegrationRoot 'settings.local.json'
+        $document = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $delivery = Get-CfnProperty $document 'delivery' $null
+        if ($null -eq $delivery) { $delivery = [pscustomobject]@{}; $document | Add-Member NoteProperty delivery $delivery }
+        $delivery | Add-Member NoteProperty enabled $Enabled -Force
+        Write-CfnJsonAtomic (Join-Path $IntegrationRoot 'spool\state\runtime-control.json') @{ enabled = $Enabled; changed_at = [datetimeoffset]::UtcNow.ToString('o') }
+        Write-CfnJsonAtomic $path $document
+    } finally { Exit-CfnMutex $lock }
+}
+
+function ConvertTo-CfnNativeArgument {
+    param([AllowEmptyString()] [string] $Value)
+    # Windows CommandLineToArgvW / CRT quoting; no shell interprets these values.
+    $escaped = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
+    $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+    return '"' + $escaped + '"'
+}
+
+function Resolve-CfnNativeCli {
+    param([string] $Path)
+    $full = [IO.Path]::GetFullPath($Path)
+    if ([IO.Path]::GetExtension($full) -ieq '.exe') { return $full }
+    if ([IO.Path]::GetExtension($full) -in @('.cmd', '.ps1')) {
+        $shim = (Get-Content -LiteralPath $full -Raw -Encoding UTF8).Replace('\', '/')
+        $binary = Join-Path (Split-Path -Parent $full) 'node_modules\@larksuite\cli\bin\lark-cli.exe'
+        if ($shim.Contains('node_modules/@larksuite/cli/') -and (Test-Path -LiteralPath $binary -PathType Leaf)) { return $binary }
+    }
+    throw 'Unsupported lark-cli wrapper. Select lark-cli.exe or the official npm lark-cli.cmd / lark-cli.ps1 shim.'
+}
+
+function Invoke-CfnTransport {
+    param([string] $IntegrationRoot, [string] $CliPath, [string[]] $Arguments, $Settings, $QueueItem = $null)
+    $process = New-Object Diagnostics.Process
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = Resolve-CfnNativeCli $CliPath
+    $start.Arguments = (@($Arguments | ForEach-Object { ConvertTo-CfnNativeArgument $_ }) -join ' ')
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.StandardOutputEncoding = New-Object Text.UTF8Encoding($false)
+    $start.StandardErrorEncoding = New-Object Text.UTF8Encoding($false)
+    $start.EnvironmentVariables['LARKSUITE_CLI_NO_UPDATE_NOTIFIER'] = '1'
+    $start.EnvironmentVariables['LARKSUITE_CLI_NO_SKILLS_NOTIFIER'] = '1'
+    if ($Settings.RequireLarkProfile) {
+        $profileRoot = Join-Path $Settings.LarkChannelHome ('profiles\' + $Settings.LarkChannelProfile)
+        $start.EnvironmentVariables['LARK_CHANNEL'] = '1'
+        $start.EnvironmentVariables['LARK_CHANNEL_HOME'] = $Settings.LarkChannelHome
+        $start.EnvironmentVariables['LARK_CHANNEL_PROFILE'] = $Settings.LarkChannelProfile
+        $start.EnvironmentVariables['LARK_CHANNEL_CONFIG'] = Join-Path $profileRoot 'lark-cli-source\config.json'
+        $start.EnvironmentVariables['LARKSUITE_CLI_CONFIG_DIR'] = Join-Path $profileRoot 'lark-cli'
+    } else {
+        foreach ($name in @('LARK_CHANNEL', 'LARK_CHANNEL_HOME', 'LARK_CHANNEL_PROFILE', 'LARK_CHANNEL_CONFIG', 'LARKSUITE_CLI_CONFIG_DIR')) {
+            $start.EnvironmentVariables.Remove($name)
+        }
+    }
+    $process.StartInfo = $start
+    try {
+        # One short shared lock makes pause/disable and the next submission atomic.
+        # It is released after Start(), so controls do not wait for a network call.
+        $lock = Enter-CfnMutex $IntegrationRoot
+        if ($null -eq $lock) { throw 'Delivery state is busy.' }
+        try {
+            $current = Get-CfnSettings $IntegrationRoot
+            $control = Get-CfnDeliveryControlState $IntegrationRoot $current
+            if (-not $current.FeishuEnabled -or -not $control.EffectiveActive) {
+                return [pscustomobject]@{ ExitCode = -2; Stdout = ''; Stderr = ''; Skipped = $true; TimedOut = $false }
+            }
+            if ($null -ne $QueueItem -and -not (Test-CfnWaitingItemActive $IntegrationRoot $QueueItem $current.WaitingStateTtlHours)) {
+                return [pscustomobject]@{ ExitCode = -2; Stdout = ''; Stderr = ''; Skipped = $true; TimedOut = $false }
+            }
+            if ($current.ChatId -cne $Settings.ChatId -or $current.LarkChannelProfile -cne $Settings.LarkChannelProfile -or
+                $current.LarkChannelHome -cne $Settings.LarkChannelHome -or $current.RequireLarkProfile -ne $Settings.RequireLarkProfile -or
+                $current.IncludeTaskPreview -ne $Settings.IncludeTaskPreview -or $current.IncludeResultPreview -ne $Settings.IncludeResultPreview -or
+                $current.IncludePermissionTool -ne $Settings.IncludePermissionTool -or
+                $current.LarkCliPath -cne $Settings.LarkCliPath -or $current.MessageFormat -cne $Settings.MessageFormat) {
+                return [pscustomobject]@{ ExitCode = -2; Stdout = ''; Stderr = ''; Skipped = $true; TimedOut = $false }
+            }
+            [void]$process.Start()
+        } finally { Exit-CfnMutex $lock }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $finished = $process.WaitForExit($Settings.SendTimeoutSeconds * 1000)
+        if (-not $finished) {
+            try { $process.Kill() } catch {}
+            [void]$process.WaitForExit(3000)
+        }
+        # WaitForExit does not guarantee asynchronous stream continuations have run.
+        [void]$stdoutTask.Wait(3000)
+        [void]$stderrTask.Wait(3000)
+        return [pscustomobject]@{
+            ExitCode = if ($finished) { $process.ExitCode } else { -1 }
+            Stdout = if ($stdoutTask.IsCompleted) { $stdoutTask.GetAwaiter().GetResult() } else { '' }
+            Stderr = if ($stderrTask.IsCompleted) { $stderrTask.GetAwaiter().GetResult() } else { '' }
+            TimedOut = (-not $finished); Skipped = $false
+        }
+    } finally { $process.Dispose() }
+}
+
+function Update-CfnDeliveryResult {
+    param([string] $IntegrationRoot, [string] $Status, [string] $Reason = '', [string] $EventId = '', [string] $MessageId = '')
+    $path = Join-Path $IntegrationRoot 'spool\state\delivery-result.json'
+    $previous = if (Test-Path -LiteralPath $path) { try { Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $null } } else { $null }
+    $now = [datetimeoffset]::UtcNow.ToString('o')
+    Write-CfnJsonAtomic $path ([ordered]@{
+        at = $now; status = $Status; reason = $Reason; event_id = $EventId
+        last_success_at = if ($Status -eq 'sent') { $now } else { Get-CfnProperty $previous 'last_success_at' '' }
+        last_message_id = if ($MessageId) { $MessageId } else { Get-CfnProperty $previous 'last_message_id' '' }
+    })
+}
+
+function Invoke-CfnRetention {
+    param([string] $IntegrationRoot, $Settings)
+    $stateLock = Enter-CfnMutex $IntegrationRoot 'state'
+    try {
+    foreach ($entry in @(
+        @('spool\sent', '*.sent', ($Settings.SentMarkerRetentionDays * 24)),
+        @('spool\expired', '*.json', ($Settings.ExpiredItemRetentionDays * 24)),
+        @('spool\suppressed', '*.json', ($Settings.SuppressedItemRetentionDays * 24)),
+        @('spool\state\waiting', '*.json', $Settings.WaitingStateTtlHours),
+        @('spool\state\resolved', '*.json', $Settings.WaitingStateTtlHours),
+        @('spool\state\completion', '*.json', ($Settings.CompletionArmTtlMinutes / 60.0)),
+        @('spool\state\ready', '*.json', $Settings.ReadyStateTtlHours),
+        @('spool\state\generations', '*.json', $Settings.WaitingStateTtlHours)
+    )) {
+        $cutoff = [datetime]::UtcNow.AddHours(-[double]$entry[2])
+        Get-ChildItem -LiteralPath (Join-Path $IntegrationRoot $entry[0]) -File -Filter $entry[1] -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTimeUtc -lt $cutoff } | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+    } finally { Exit-CfnMutex $stateLock }
+}
+
 Export-ModuleMember -Function @(
+    'Get-CfnRequestIdentity', 'New-CfnPermissionEventId', 'Test-CfnWaitingItemActive',
+    'Get-CfnCodexHome', 'Enter-CfnMutex', 'Exit-CfnMutex', 'Set-CfnDeliveryEnabled',
+    'ConvertTo-CfnNativeArgument', 'Resolve-CfnNativeCli', 'Invoke-CfnTransport', 'Update-CfnDeliveryResult', 'Invoke-CfnRetention',
     'Get-CfnProperty',
     'Resolve-CfnPath',
     'Ensure-CfnDirectory',

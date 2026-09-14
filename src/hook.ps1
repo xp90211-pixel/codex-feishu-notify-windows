@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $IntegrationRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $IntegrationRoot 'CodexFeishuNotify.psm1') -Force -DisableNameChecking
 $eventName = ''
+$stateLock = $null
 
 try {
     $raw = [Console]::In.ReadToEnd()
@@ -18,6 +19,8 @@ try {
 
     $event = $raw | ConvertFrom-Json
     $eventName = [string](Get-CfnProperty $event 'hook_event_name' '')
+    $stateLock = Enter-CfnMutex $IntegrationRoot
+    if ($null -eq $stateLock) { throw 'Lifecycle state is busy.' }
     $settings = Get-CfnSettings $IntegrationRoot
     $sessionId = ([string](Get-CfnProperty $event 'session_id' '')).Trim()
     $turnId = ([string](Get-CfnProperty $event 'turn_id' '')).Trim()
@@ -29,13 +32,14 @@ try {
         $ready = Set-CfnLifecycleReady $IntegrationRoot $sessionId
         Write-CfnLog $IntegrationRoot 'hook' $(if ($ready) { 'session_ready' } else { 'session_ready_failed' }) '' $sessionId
     } elseif ($eventName -in @('PostToolUse', 'UserPromptSubmit')) {
-        $resolved = Resolve-CfnWaitingState $IntegrationRoot $sessionId $settings.WaitingStateTtlHours
+        $toolEvent = if ($eventName -eq 'PostToolUse') { $event } else { $null }
+        $resolved = Resolve-CfnWaitingState $IntegrationRoot $sessionId $settings.WaitingStateTtlHours -ToolEvent $toolEvent
         if ($resolved.Found) {
             $status = if ($resolved.PendingRemoved) { 'waiting_cancelled_before_send' } else { 'waiting_resolved' }
             Write-CfnLog $IntegrationRoot 'hook' $status $resolved.EventId $eventName
         }
     } elseif ($eventName -eq 'Stop') {
-        $resolved = Resolve-CfnWaitingState $IntegrationRoot $sessionId $settings.WaitingStateTtlHours
+        $resolved = Resolve-CfnWaitingState $IntegrationRoot $sessionId $settings.WaitingStateTtlHours -TurnId $turnId
         if ($resolved.Found) { Write-CfnLog $IntegrationRoot 'hook' 'waiting_resolved' $resolved.EventId 'Stop' }
 
         if (-not $sessionId) {
@@ -54,11 +58,10 @@ try {
         } elseif ($settings.VisibleThreadsOnly -and -not (Test-CfnVisibleThread $sessionId)) {
             Write-CfnLog $IntegrationRoot 'hook' 'permission_non_visible_skipped' '' $sessionId
         } else {
-            $previous = Resolve-CfnWaitingState $IntegrationRoot $sessionId $settings.WaitingStateTtlHours
-            if ($previous.Found) { Write-CfnLog $IntegrationRoot 'hook' 'previous_waiting_replaced' $previous.EventId }
-
             $toolName = Protect-CfnPreview ([string](Get-CfnProperty $event 'tool_name' '')) 80
-            $eventId = Get-CfnEventId "needs-input|$sessionId|$turnId|$toolName"
+            $identity = Get-CfnRequestIdentity $event
+            $eventId = New-CfnPermissionEventId $IntegrationRoot $sessionId $identity
+            if (-not $eventId) { Write-CfnLog $IntegrationRoot 'hook' 'resolved_request_skipped'; exit 0 }
             $cwd = [string](Get-CfnProperty $event 'cwd' '')
             $project = if ($cwd) { Split-Path -Leaf $cwd.TrimEnd([char[]]@('\', '/')) } else { 'Local task' }
             if (-not $project) { $project = 'Local task' }
@@ -92,7 +95,7 @@ try {
 
             if ($shouldNotify) {
                 $toastTag = $eventId.Substring(0, [math]::Min(64, $eventId.Length))
-                [void](Set-CfnWaitingState $IntegrationRoot $sessionId $eventId $toastTag)
+                [void](Set-CfnWaitingState $IntegrationRoot $sessionId $eventId $toastTag $identity)
                 $desktopBody = "工作区 $($item.project) 正在等待授权。"
                 if ($settings.IncludePermissionTool -and $toolName) { $desktopBody += " 工具：$toolName" }
                 [void](Show-CfnDesktopEvent $IntegrationRoot $settings 'needs-input' $desktopBody $toastTag)
@@ -105,6 +108,8 @@ try {
     }
 } catch {
     Write-CfnLog $IntegrationRoot 'hook' 'exception' '' $_.Exception.Message
+} finally {
+    Exit-CfnMutex $stateLock
 }
 
 # Stop hooks require valid JSON on stdout. This notifier never blocks or

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0 — 2026-09-14
+
+- Fix root/multiline TOML and UTF-8 handling with an offline parser and transactional installation rollback.
+- Require explicit Feishu message receipts; keep uncertain sends queued; add bounded native CLI timeouts, safe argv and cross-process delivery/control locks.
+- Track independent permission requests, synchronous lifecycle state, stable input hashes and explicit resolution tombstones.
+- Default new previews off, redact JSON secrets and preserve unspecified upgrade settings.
+- Separate Save Settings from Install/Upgrade; add actionable status and user-confirmed test messages; support PC-only setup and CODEX_HOME.
+- Make DryRun read-only; add log/state retention, shared schedule verification, safe manifest-based uninstall and checked release file allowlists.
+- Add offline failure/concurrency tests and Windows PowerShell 5.1 / PowerShell 7 installation transactions.
+
+
 ## Unreleased
 
 ## 0.5.0 - 2026-08-27

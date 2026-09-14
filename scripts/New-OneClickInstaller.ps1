@@ -32,6 +32,8 @@ if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
     throw "Release package not found: $PackagePath"
 }
 
+& (Join-Path $PSScriptRoot 'Test-ReleasePackage.ps1') -PackagePath $PackagePath | Out-Null
+
 $bootstrapperPath = Join-Path $projectRoot 'installer\Bootstrapper.cs'
 $manifestPath = Join-Path $projectRoot 'installer\app.manifest'
 foreach ($requiredPath in @($bootstrapperPath, $manifestPath)) {

@@ -9,8 +9,11 @@ $ErrorActionPreference = 'Stop'
 $IntegrationRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $IntegrationRoot 'CodexFeishuNotify.psm1') -Force -DisableNameChecking
 $PayloadJson = ($NotificationPayload -join ' ').Trim()
+$stateLock = $null
 
 try {
+    $stateLock = Enter-CfnMutex $IntegrationRoot
+    if ($null -eq $stateLock) { throw 'Notification state is busy.' }
     $settings = Get-CfnSettings $IntegrationRoot
     if (-not $PayloadJson) {
         Write-CfnLog $IntegrationRoot 'enqueue' 'empty_payload'
@@ -61,7 +64,7 @@ try {
         [void](Use-CfnCompletionArm $IntegrationRoot $threadId $turnId $settings.CompletionArmTtlMinutes)
     }
 
-    $resolved = Resolve-CfnWaitingState $IntegrationRoot $threadId $settings.WaitingStateTtlHours
+    $resolved = Resolve-CfnWaitingState $IntegrationRoot $threadId $settings.WaitingStateTtlHours -TurnId $turnId
     if ($resolved.Found) { Write-CfnLog $IntegrationRoot 'notify' 'waiting_resolved' $resolved.EventId }
 
     $idMaterial = if ($threadId -or $turnId) { "$threadId|$turnId" } else { $PayloadJson }
@@ -107,10 +110,7 @@ try {
         return
     }
 
-    $tempPath = Join-Path $pendingRoot "$eventId.$PID.tmp"
-    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($tempPath, ($queueItem | ConvertTo-Json -Compress), $utf8NoBom)
-    Move-Item -LiteralPath $tempPath -Destination $pendingPath -Force
+    Write-CfnJsonAtomic $pendingPath $queueItem
     Write-CfnLog $IntegrationRoot 'enqueue' 'queued' $eventId
 
     [void](Show-CfnDesktopEvent $IntegrationRoot $settings 'completed' $desktopBody $eventId)
@@ -120,6 +120,8 @@ try {
     Write-CfnLog $IntegrationRoot 'trigger' 'scheduled_only' $eventId
 } catch {
     Write-CfnLog $IntegrationRoot 'enqueue' 'exception' '' $_.Exception.Message
+} finally {
+    Exit-CfnMutex $stateLock
 }
 
 return

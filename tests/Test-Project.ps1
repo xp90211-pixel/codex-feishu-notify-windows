@@ -260,7 +260,7 @@ try {
     $manualControl = Get-CfnDeliveryControlState $tempIntegration $scheduleSettings ([datetime]'2026-08-27 10:00')
     Assert-True ($manualState.Mode -eq 'force' -and $manualControl.EffectiveActive -and $manualControl.Reason -eq 'manual_force') 'A temporary force state must activate delivery outside the saved schedule.'
     $expiredManualState = Get-CfnManualDeliveryState $tempIntegration -Now ([datetimeoffset]([datetime]'2026-08-27 18:41'))
-    Assert-True ($null -eq $expiredManualState -and -not (Test-Path -LiteralPath (Get-CfnManualDeliveryStatePath $tempIntegration))) 'An expired manual override must remove itself and return control to the saved schedule.'
+    Assert-True ($null -eq $expiredManualState -and (Test-Path -LiteralPath (Get-CfnManualDeliveryStatePath $tempIntegration))) 'An expired manual override must return control to the saved schedule without read-side file mutation.'
     Copy-Item -LiteralPath (Join-Path $projectRoot 'src\CodexFeishuNotify.psm1') -Destination $tempIntegration
     Copy-Item -LiteralPath (Join-Path $projectRoot 'src\notify.ps1') -Destination $tempIntegration
     Copy-Item -LiteralPath (Join-Path $projectRoot 'src\hook.ps1') -Destination $tempIntegration
@@ -339,6 +339,7 @@ try {
         cwd = 'C:\example\workspace'
         hook_event_name = 'PostToolUse'
         tool_name = 'Bash'
+        tool_input = [ordered]@{ command = 'secret command deliberately ignored' }
     } | ConvertTo-Json -Compress
     $resumeResult = Invoke-CfnTestHook $resumePayload
     $waitingAfterResume = @(Get-ChildItem -LiteralPath (Join-Path $tempIntegration 'spool\pending') -Filter '*.json' -File -ErrorAction SilentlyContinue)
@@ -449,19 +450,19 @@ try {
     Remove-Item -LiteralPath $tempIntegration -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-$notifySource = Get-Content -LiteralPath (Join-Path $projectRoot 'src\notify.ps1') -Raw
+$notifySource = Get-Content -LiteralPath (Join-Path $projectRoot 'src\notify.ps1') -Raw -Encoding UTF8
 Assert-True (-not [regex]::IsMatch($notifySource, '(?m)^\s*Start-ScheduledTask\b')) 'notify.ps1 must never start the scheduled task.'
 Assert-True ($notifySource -match "agent-turn-complete") 'notify.ps1 must filter for Codex completion events.'
 Assert-True ($notifySource -match 'Use-CfnCompletionArm') 'notify.ps1 must enforce the completion gate.'
 
-$hookSource = Get-Content -LiteralPath (Join-Path $projectRoot 'src\hook.ps1') -Raw
+$hookSource = Get-Content -LiteralPath (Join-Path $projectRoot 'src\hook.ps1') -Raw -Encoding UTF8
 Assert-True (-not [regex]::IsMatch($hookSource, '(?m)^\s*Start-ScheduledTask\b')) 'Lifecycle hooks must never start the scheduled task.'
 Assert-True ($hookSource -match 'SessionStart' -and $hookSource -match 'PermissionRequest' -and $hookSource -match 'PostToolUse' -and $hookSource -match "'Stop'") 'Lifecycle hooks must cover readiness, waiting, resolution, and completion arming.'
 Assert-True ($hookSource -notmatch 'behavior.{0,30}(allow|deny)' -and $hookSource -notmatch 'decision.{0,30}block') 'Notification hooks must never decide approvals or continue tasks.'
 
-$guiSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\Settings-Gui.ps1') -Raw
-$guiModuleSource = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexFeishuNotify.Gui.psm1') -Raw
-$drainSource = Get-Content -LiteralPath (Join-Path $projectRoot 'src\drain.ps1') -Raw
+$guiSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\Settings-Gui.ps1') -Raw -Encoding UTF8
+$guiModuleSource = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexFeishuNotify.Gui.psm1') -Raw -Encoding UTF8
+$drainSource = Get-Content -LiteralPath (Join-Path $projectRoot 'src\drain.ps1') -Raw -Encoding UTF8
 Assert-True (-not [regex]::IsMatch($guiSource, '(?m)^\s*Start-ScheduledTask\b')) 'The settings GUI must never manually start the scheduled task.'
 Assert-True ($guiSource -match 'Install\.ps1' -and $guiSource -match 'Test-Configuration\.ps1') 'The settings GUI must apply and verify through the existing project scripts.'
 Assert-True ($guiSource -match 'FormBorderStyle\]::Sizable' -and $guiSource -notmatch 'FormBorderStyle\]::FixedDialog') 'The settings GUI must remain resizable.'
@@ -482,32 +483,32 @@ Assert-True ($guiSource -match '全天运行日' -and $guiSource -match "Monday\
 Assert-True ($guiSource -match 'TextRenderer\]::MeasureText' -and $guiSource -match 'holiday_explanation_reflows' -and $guiSource -match 'SizeType\]::AutoSize') 'The holiday explanation row must shrink to one line and grow only when its measured text wraps.'
 Assert-True ($guiSource -match "uninstallButton\.Text\s*=\s*'卸载通知'" -and $guiSource -match 'basicStack\.Controls\.Add\(\$maintenanceGroup,\s*0,\s*2\)' -and $guiSource -notmatch 'actionBar\.Controls\.Add\(\$uninstallButton\)') 'The uninstall notification button must be the final section of the Feishu connection tab, not a global action-bar command.'
 Assert-True ($guiSource -match "installButton\.Text\s*=\s*'安装通知'" -and $guiSource -match "Invoke-CfnGuiDeployment\s+-Mode\s+'Install'" -and $guiSource -notmatch 'actionBar\.Controls\.Add\(\$installButton\)') 'The maintenance section must expose an install/repair button backed by the shared installer workflow.'
-Assert-True ($guiSource -match '修复 Codex notify 命令链' -and $guiSource -match '审查、信任和启用' -and $guiSource -match '不会绕过此安全步骤') 'The install flow must explain notify repair and the separate Codex hook-trust step.'
+Assert-True ($guiSource -match '合并 Hook' -and $guiSource -match '审查、信任并启用' -and $guiSource -match 'SettingsOnly') 'The install flow must explain notify repair and the separate Codex hook-trust step.'
 Assert-True ($guiSource -match "instantDeliveryButton\.Text\s*=\s*'马上开始'" -and $guiSource -match "'立刻停止'" -and $guiSource -match 'Invoke-CfnGuiManualDeliveryToggle') 'The schedule tab must expose one dynamic immediate start/stop control.'
-Assert-True ($guiModuleSource -match 'CodexFeishuNotify\.ManualOverride' -and $guiModuleSource -match 'Set-CfnManualDeliveryState' -and $guiModuleSource -match 'WindowStyle Hidden') 'Immediate running must use an expiring named trigger and a hidden first drain.'
+Assert-True ($guiModuleSource -match 'CodexFeishuNotify\.ManualOverride' -and $guiModuleSource -match 'Set-CfnManualDeliveryState' -and $guiModuleSource -notmatch 'Start-Process') 'Immediate running must use an expiring named trigger without a direct unmanaged worker.'
 Assert-True ($drainSource -match 'Get-CfnDeliveryControlState' -and $drainSource -match 'EffectiveActive') 'The drain must enforce saved schedule and manual pause/force state before sending.'
 Assert-True ($guiModuleSource -match 'ConvertFrom-Json' -and $guiModuleSource -match 'PSObject\.Properties\[\$eventName\]') 'GUI hook status must parse hooks.json instead of matching escaped JSON text.'
 Assert-True ($guiModuleSource -match 'foreach \(\$candidate in @\(''Codex\.LarkNotify\.codex'', ''Codex\.FeishuNotify''\)\)' -and $guiModuleSource -match 'else \{\s*\$TaskName = ''Codex\.LarkNotify\.codex''\s*\}') 'The GUI must preserve compatible tasks but default a clean-machine install to Codex.LarkNotify.codex.'
 Assert-True (Test-Path -LiteralPath (Join-Path $projectRoot 'Open-Settings.cmd') -PathType Leaf) 'The project must include a double-click GUI launcher.'
 
-$oneClickBuilderSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\New-OneClickInstaller.ps1') -Raw
-$oneClickBootstrapperSource = Get-Content -LiteralPath (Join-Path $projectRoot 'installer\Bootstrapper.cs') -Raw
-$oneClickManifestSource = Get-Content -LiteralPath (Join-Path $projectRoot 'installer\app.manifest') -Raw
-$releaseWorkflowSource = Get-Content -LiteralPath (Join-Path $projectRoot '.github\workflows\release.yml') -Raw
-$releasePackageSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\New-ReleasePackage.ps1') -Raw
+$oneClickBuilderSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\New-OneClickInstaller.ps1') -Raw -Encoding UTF8
+$oneClickBootstrapperSource = Get-Content -LiteralPath (Join-Path $projectRoot 'installer\Bootstrapper.cs') -Raw -Encoding UTF8
+$oneClickManifestSource = Get-Content -LiteralPath (Join-Path $projectRoot 'installer\app.manifest') -Raw -Encoding UTF8
+$releaseWorkflowSource = Get-Content -LiteralPath (Join-Path $projectRoot '.github\workflows\release.yml') -Raw -Encoding UTF8
+$releasePackageSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\New-ReleasePackage.ps1') -Raw -Encoding UTF8
 Assert-True ($oneClickBuilderSource -match 'New-ReleasePackage\.ps1' -and $oneClickBuilderSource -match 'CodexFeishuNotify\.Payload\.zip' -and $oneClickBuilderSource -match 'Get-AuthenticodeSignature') 'The one-click build must embed the public ZIP, emit a checksum, and report signing status.'
 Assert-True ($oneClickBootstrapperSource -match 'IsChildPath' -and $oneClickBootstrapperSource -match 'invalid path segment' -and $oneClickBootstrapperSource -match 'backupDirectory') 'The one-click bootstrapper must reject unsafe archive paths and preserve replacement rollback.'
 Assert-True ($oneClickBootstrapperSource -match 'SpecialFolder\.LocalApplicationData' -and $oneClickBootstrapperSource -match 'ProductDirectoryName' -and $oneClickBootstrapperSource -match 'SpecialFolder\.Programs') 'The one-click bootstrapper must use a per-user product directory and Start menu shortcut.'
 Assert-True ($oneClickManifestSource -match 'requestedExecutionLevel level="asInvoker"' -and $oneClickManifestSource -notmatch 'requireAdministrator') 'The one-click installer must not request elevation.'
-Assert-True ($releasePackageSource -match "'installer'" -and $releaseWorkflowSource -match 'Test-OneClickInstaller\.ps1' -and $releaseWorkflowSource -match 'New-OneClickInstaller\.ps1' -and $releaseWorkflowSource -match "'release', 'create'" -and $releaseWorkflowSource -match 'gh @releaseArguments') 'Release packaging and tag automation must include and smoke-test the one-click installer.'
+Assert-True ($releasePackageSource -match 'release-files.txt' -and $releasePackageSource -match 'Test-ReleasePackage' -and $releaseWorkflowSource -match 'Test-OneClickInstaller\.ps1' -and $releaseWorkflowSource -match 'New-OneClickInstaller\.ps1' -and $releaseWorkflowSource -match "'release', 'create'" -and $releaseWorkflowSource -match 'gh @releaseArguments') 'Release packaging and tag automation must include and smoke-test the one-click installer.'
 
-$installerSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\Install.ps1') -Raw
+$installerSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\Install.ps1') -Raw -Encoding UTF8
 Assert-True ($installerSource -match 'Get-CfnUpdatedHooksJson' -and $installerSource -match 'hooks\.json\.before-') 'The installer must merge and back up lifecycle hooks.'
 Assert-True ($installerSource -match 'deployment-' -and $installerSource -match 'AllowDemandStart') 'The installer must snapshot upgrades and verify demand start stays disabled.'
 Assert-True ($installerSource -match 'NoFeishuNotifications' -and $installerSource -match 'DisableScheduledTask' -and $installerSource -match 'Move-CfnPendingToSuppressed') 'The installer must persist both manual switches and suppress pending Feishu items when disabled.'
-Assert-True ($installerSource -match 'AllDayWeekdays' -and $installerSource -match 'New-ScheduledTaskTrigger\s+-Weekly') 'The installer must persist all-day weekdays and create true weekly gap triggers.'
+Assert-True ($installerSource -match 'AllDayWeekdays' -and $installerSource -match 'New-CfnScheduledTriggers') 'The installer must persist all-day weekdays and create true weekly gap triggers.'
 
-$gitIgnore = Get-Content -LiteralPath (Join-Path $projectRoot '.gitignore') -Raw
+$gitIgnore = Get-Content -LiteralPath (Join-Path $projectRoot '.gitignore') -Raw -Encoding UTF8
 Assert-True ($gitIgnore -match '(?m)^settings\.local\.json\r?$') 'settings.local.json must be ignored by Git.'
 Assert-True ($gitIgnore -match '(?m)^holidays\.local\.json\r?$') 'The installed holiday calendar must be ignored by Git.'
 Assert-True ($gitIgnore -match '(?m)^spool/\r?$') 'Spool data must be ignored by Git.'

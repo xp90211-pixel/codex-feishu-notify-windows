@@ -9,13 +9,15 @@
     "profile": "codex",
     "require_profile": true,
     "send_attempts_per_run": 2,
-    "retry_delay_seconds": 2
+    "retry_delay_seconds": 2,
+    "timeout_seconds": 30
   },
   "filters": {
     "visible_threads_only": true,
     "skip_bridge_origin": true
   },
   "delivery": {
+    "enabled": true,
     "start": "18:40",
     "end": "02:00",
     "interval_minutes": 1,
@@ -24,7 +26,8 @@
     "all_day_weekdays": [],
     "max_queue_age_hours": 24,
     "sent_marker_retention_days": 90,
-    "expired_item_retention_days": 7
+    "expired_item_retention_days": 7,
+    "suppressed_item_retention_days": 7
   },
   "lifecycle": {
     "strict_completion_gate": true,
@@ -41,8 +44,8 @@
   },
   "message": {
     "format": "card",
-    "include_task_preview": true,
-    "include_result_preview": true,
+    "include_task_preview": false,
+    "include_result_preview": false,
     "include_permission_tool": false
   }
 }

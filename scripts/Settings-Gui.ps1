@@ -24,7 +24,7 @@ if (-not $ValidateOnly -and
     if ($InstallRoot) { $arguments += @('-InstallRoot', ('"{0}"' -f $InstallRoot.Replace('"', '\"'))) }
     if ($TaskName) { $arguments += @('-TaskName', ('"{0}"' -f $TaskName.Replace('"', '\"'))) }
     if ($SmokeTest) { $arguments += '-SmokeTest' }
-    Start-Process -FilePath $powerShell.Source -ArgumentList $arguments | Out-Null
+    Start-Process -FilePath $powerShell.Source -ArgumentList $arguments -WindowStyle Hidden | Out-Null
     return
 }
 
@@ -355,7 +355,7 @@ function Set-CfnControlsFromModel {
             $script:sourceLabel.ForeColor = [System.Drawing.Color]::DarkGreen
         }
         'legacy' {
-            $script:sourceLabel.Text = "当前读取来源：旧版脚本（首次应用会迁移并备份）`r`n$sourcePath"
+            $script:sourceLabel.Text = "当前读取来源：旧版脚本（请用安装通知迁移并备份）`r`n$sourcePath"
             $script:sourceLabel.ForeColor = [System.Drawing.Color]::DarkOrange
         }
         default {
@@ -383,7 +383,7 @@ function Update-CfnCalendarControls {
 
 function Format-CfnDateTime {
     param([AllowNull()] $Value)
-    if ($null -eq $Value) { return '-' }
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) { return '-' }
     if ($Value -is [datetimeoffset]) { return $Value.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss') }
     if ([datetime]$Value -eq [datetime]::MinValue) { return '-' }
     return ([datetime]$Value).ToString('yyyy-MM-dd HH:mm:ss')
@@ -393,14 +393,25 @@ function Update-CfnStatus {
     try {
         $status = Get-CfnGuiStatus -InstallRoot $script:target.InstallRoot -TaskName $script:target.TaskName
         $script:taskToggleButton.Enabled = $status.TaskExists
-        $script:feishuToggleButton.Enabled = $status.SettingsExists
+        $script:feishuToggleButton.Enabled = $true
+        $script:applyButton.Enabled = $status.InstallStateExists
         $script:uninstallButton.Enabled = $status.InstallStateExists
-        Set-CfnScheduleToggleState ([bool]$status.ScheduleEnabled)
-        Set-CfnFeishuToggleState ([bool]$status.FeishuEnabled)
+        $script:sendTestButton.Enabled = $status.SettingsExists
+        Set-CfnScheduleToggleState $(if ($status.SettingsExists) { [bool]$status.ScheduleEnabled } else { [bool]$script:model.ScheduleEnabled })
+        Set-CfnFeishuToggleState $(if ($status.SettingsExists) { [bool]$status.FeishuEnabled } else { [bool]$script:model.FeishuEnabled })
         Set-CfnInstantDeliveryState $status
-        $script:model.ScheduleEnabled = [bool]$status.ScheduleEnabled
-        $script:model.FeishuEnabled = [bool]$status.FeishuEnabled
+        if ($status.SettingsExists) {
+            $script:model.ScheduleEnabled = [bool]$status.ScheduleEnabled
+            $script:model.FeishuEnabled = [bool]$status.FeishuEnabled
+        }
+        if ($script:deliverySummaryLabel) { $script:deliverySummaryLabel.Text = $status.Summary }
         $lines = @(
+            $status.Summary,
+            "下次允许发送：$(Format-CfnDateTime $status.NextEligibleAt)（不等于保证到达时间）",
+            "最近实际发送：$(Format-CfnDateTime $status.LastSuccessAt)    飞书回执：$($status.LastMessageId)",
+            "最近过滤原因：$($status.LastEventReason)",
+            '桌面登记过滤：只识别已知 JSON 结构；未知结构或显式 false 不通知，不属于授权边界。',
+            '',
             "运行计划：$(if ($status.ScheduleEnabled) { '已启用' } else { '已停用' })    飞书通知：$(if ($status.FeishuEnabled) { '已打开' } else { '已关闭' })    任务状态：$($status.State)",
             "即时投递：$(if ($status.DeliveryActive) { '运行中' } else { '已停止' })（$($status.DeliveryReason)）    临时触发器：$($status.ManualTriggerPresent)    临时状态截止：$(Format-CfnDateTime $status.ManualExpiresAt)",
             "每日触发器：$($status.DailyTriggerCount)    每周全天触发器：$($status.WeeklyTriggerCount)    节假日触发器：$($status.HolidayTriggerCount)    待发送：$($status.PendingCount)    已抑制：$($status.SuppressedCount)",
@@ -462,7 +473,7 @@ function Show-CfnValidation {
 function Set-CfnBusy {
     param([bool] $Busy)
     $script:form.UseWaitCursor = $Busy
-    foreach ($button in @($script:applyButton, $script:validateButton, $script:reloadButton, $script:taskToggleButton, $script:instantDeliveryButton, $script:feishuToggleButton, $script:installButton, $script:uninstallButton)) {
+    foreach ($button in @($script:applyButton, $script:validateButton, $script:reloadButton, $script:taskToggleButton, $script:instantDeliveryButton, $script:feishuToggleButton, $script:installButton, $script:uninstallButton, $script:sendTestButton)) {
         $button.Enabled = -not $Busy
     }
     [System.Windows.Forms.Application]::DoEvents()
@@ -502,7 +513,7 @@ function Invoke-CfnGuiDeployment {
         $operationSummary = if ($isInstall) {
             '将按当前界面配置首次安装或修复通知。已有本机配置、其他 Codex Hook 和原通知命令会先备份并尽量保留。'
         } else {
-            '将按当前界面配置重新应用设置。'
+            '仅保存本地设置；只有时间规则改变时更新计划任务，不修改 Codex Hook 或通知命令。'
         }
         $confirmation = @(
             $operationSummary,
@@ -520,8 +531,7 @@ function Invoke-CfnGuiDeployment {
             "等待授权通知：$($selected.NotifyPermissionRequests)",
             "PC 通知：$($selected.DesktopEnabled)（仅后台：$($selected.DesktopOnlyWhenCodexBackground)）",
             '',
-            '安装器会部署通知脚本、合并用户级生命周期 Hook、修复 Codex notify 命令链并重新注册计划任务，但不会手动启动任务。',
-            '完成后仍需重新打开 Codex，并在 Hook 管理界面审查、信任和启用新安装或发生变化的 Hook；设置器不会绕过此安全步骤。',
+            $(if ($isInstall) { '安装器会部署脚本、合并 Hook 并注册计划任务，不会手动启动任务；完成后请重新打开 Codex，审查、信任并启用新安装或变化的 Hook。' } else { '保存不会部署脚本或修改 Hook，无需重新信任 Hook；新设置在下一次事件或投递时读取。' }),
             '',
             '是否继续？'
         ) -join [Environment]::NewLine
@@ -544,6 +554,7 @@ function Invoke-CfnGuiDeployment {
         }
         [System.Windows.Forms.Application]::DoEvents()
         $parameters = Get-CfnGuiInstallParameters $selected
+        if (-not $isInstall) { $parameters.SettingsOnly = $true }
         $installOutput = (& $script:installerPath @parameters -Confirm:$false 2>&1 | Out-String).Trim()
 
         $powerShell = Get-CfnPowerShellExecutable
@@ -564,7 +575,7 @@ function Invoke-CfnGuiDeployment {
             $successLead,
             '计划任务没有被手动启动。',
             '',
-            '请完全退出并重新打开 Codex，然后审查、信任并启用这套通知的 5 个生命周期 Hook。'
+            $(if ($isInstall) { '请重新打开 Codex，然后审查、信任并启用这套通知的 5 个生命周期 Hook。' } else { '已保存；无需重启 Codex 或重新信任 Hook。' })
         ) -join [Environment]::NewLine
         [void][System.Windows.Forms.MessageBox]::Show(
             $script:form,
@@ -661,7 +672,7 @@ $headerLayout = New-Object System.Windows.Forms.TableLayoutPanel
 $headerLayout.Dock = [System.Windows.Forms.DockStyle]::Top
 $headerLayout.AutoSize = $true
 $headerLayout.ColumnCount = 1
-$headerLayout.RowCount = 2
+$headerLayout.RowCount = 3
 $headerLayout.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 8)
 [void]$headerLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
 [void]$headerLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
@@ -671,9 +682,16 @@ $rootLayout.Controls.Add($headerLayout, 0, 0)
 $title = New-CfnLayoutLabel 'Codex 飞书通知设置' -Bold -TopMargin 0
 $title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 15, [System.Drawing.FontStyle]::Bold)
 $headerLayout.Controls.Add($title, 0, 0)
-$subtitle = New-CfnLayoutLabel '修改后由安装器重新生成计划任务；不会手动启动任务，也不会改变常驻飞书 CLI。' -TopMargin 2
+$subtitle = New-CfnLayoutLabel '保存设置不改写 Hook；时间规则改变时更新计划任务。不会改变常驻飞书 CLI。' -TopMargin 2
 $subtitle.ForeColor = [System.Drawing.SystemColors]::GrayText
 $headerLayout.Controls.Add($subtitle, 0, 1)
+[void]$headerLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$deliverySummaryLabel = New-CfnLayoutLabel '正在读取通知状态…' -TopMargin 2
+$headerLayout.Controls.Add($deliverySummaryLabel, 0, 2)
+$script:deliverySummaryLabel = $deliverySummaryLabel
+$headerLayout.Add_SizeChanged({
+    $script:deliverySummaryLabel.MaximumSize = New-Object System.Drawing.Size([math]::Max(200, $this.ClientSize.Width - 8), 0)
+})
 
 $targetGroup = New-Object System.Windows.Forms.GroupBox
 $targetGroup.Text = '目标'
@@ -1045,7 +1063,11 @@ $uninstallButton = New-Object System.Windows.Forms.Button
 $uninstallButton.Text = '卸载通知'
 Set-CfnButtonLayout $uninstallButton 105
 $maintenanceFlow.Controls.Add($uninstallButton)
-$maintenanceFlow.SetFlowBreak($uninstallButton, $true)
+$sendTestButton = New-Object System.Windows.Forms.Button
+$sendTestButton.Text = '发送测试通知'
+Set-CfnButtonLayout $sendTestButton 130
+$maintenanceFlow.Controls.Add($sendTestButton)
+$maintenanceFlow.SetFlowBreak($sendTestButton, $true)
 $maintenanceHint = New-CfnLayoutLabel '安装：首次部署或修复脚本、Hook、notify 与计划任务；卸载：移除集成并尽量恢复安装前状态。' -TopMargin 1
 $maintenanceHint.ForeColor = [System.Drawing.SystemColors]::GrayText
 $maintenanceHint.AutoEllipsis = $true
@@ -1194,7 +1216,7 @@ $actionBar.Padding = New-Object System.Windows.Forms.Padding(0, 2, 0, 0)
 $rootLayout.Controls.Add($actionBar, 0, 3)
 
 $applyButton = New-Object System.Windows.Forms.Button
-$applyButton.Text = '应用设置'
+$applyButton.Text = '保存设置'
 Set-CfnButtonLayout $applyButton 105
 $applyButton.BackColor = [System.Drawing.SystemColors]::Highlight
 $applyButton.ForeColor = [System.Drawing.SystemColors]::HighlightText
@@ -1223,9 +1245,9 @@ $actionBar.Controls.Add($closeButton)
 $form.CancelButton = $closeButton
 
 $toolTip = New-Object System.Windows.Forms.ToolTip
-$toolTip.SetToolTip($applyButton, '备份现有配置并重新注册任务；不会手动启动任务。')
+$toolTip.SetToolTip($applyButton, '仅保存配置；时间规则变化时更新计划任务，不改写 Hook，不启动任务。升级脚本请用维护项“安装通知”。')
 $toolTip.SetToolTip($taskToggleButton, '单击后立即启用或停用计划任务并保存状态，但绝不会手动运行任务。')
-$toolTip.SetToolTip($instantDeliveryButton, '非运行时段点击“马上开始”会立即隐藏投递一次并临时按间隔运行；运行中点击“立刻停止”会暂停至下个运行时段。')
+$toolTip.SetToolTip($instantDeliveryButton, '非运行时段点击“马上开始”会通过临时触发器立即投递一次并临时按间隔运行；运行中点击“立刻停止”会暂停至下个运行时段。')
 $toolTip.SetToolTip($feishuToggleButton, '单击后立即打开或关闭 Codex 飞书通知并保存状态；不会关闭飞书应用，PC 通知不受影响。')
 $toolTip.SetToolTip($chatIdText, '私有值，仅保存在被 Git 忽略的本地配置中。')
 $toolTip.SetToolTip($larkCliText, '留空＝自动查找；只有自动检测失败时才需要手动指定。')
@@ -1234,7 +1256,7 @@ $toolTip.SetToolTip($profileCombo, '仅列出配置根目录下已经存在的 L
 $toolTip.SetToolTip($requireProfileCheck, '取消后将使用 lark-cli 的默认认证配置，并禁用 profile 下拉列表。')
 $toolTip.SetToolTip($strictGateCheck, 'Stop Hook 先登记，随后官方 agent-turn-complete 事件才允许完成通知入队。')
 $toolTip.SetToolTip($desktopBackgroundCheck, '只控制本机 Windows 通知；飞书发送不受 Codex 前台状态影响。')
-$toolTip.SetToolTip($weekdayPanel, '不勾选表示不设置固定的每周全天运行日；勾选后须点击“应用设置”才会重建计划任务。')
+$toolTip.SetToolTip($weekdayPanel, '不勾选表示不设置固定的每周全天运行日；勾选后须点击“保存设置”才会重建计划任务。')
 $toolTip.SetToolTip($installButton, '按当前界面配置首次安装或修复通知；会备份并验证，但不会启动计划任务，也不会绕过 Codex Hook 信任。')
 $toolTip.SetToolTip($uninstallButton, '卸载本通知集成并恢复安装前的计划任务；设置、日志和队列会保留。')
 
@@ -1317,6 +1339,7 @@ $taskToggleButton.Add_Click({
         }
 
         Set-CfnBusy $true
+        Set-CfnDeliveryEnabled -IntegrationRoot $script:target.InstallRoot -Enabled $newEnabled
         Clear-CfnGuiManualDeliveryOverride -InstallRoot $script:target.InstallRoot -TaskName $script:target.TaskName
         if ($newEnabled) {
             Enable-ScheduledTask -TaskName $script:target.TaskName -ErrorAction Stop | Out-Null
@@ -1342,7 +1365,7 @@ $instantDeliveryButton.Add_Click({
         $script:statusText.Text = switch ([string]$outcome.Action) {
             'paused' { '已立刻停止投递；将在 {0} 自动恢复，或再次点击“马上开始”。' -f (Format-CfnDateTime $outcome.ExpiresAt) }
             'forced' { "已马上开始投递；将在 $(Format-CfnDateTime $outcome.ExpiresAt) 交回正常运行时段。" }
-            default { '已恢复当前正常运行时段，并立即启动了一次隐藏投递。' }
+            default { '已恢复正常运行时段，并安排一次临时触发；没有直接启动后台进程。' }
         }
     } catch {
         [void][System.Windows.Forms.MessageBox]::Show($script:form, $_.Exception.Message, '即时控制失败', 'OK', 'Error')
@@ -1354,7 +1377,11 @@ $instantDeliveryButton.Add_Click({
 $feishuToggleButton.Add_Click({
     try {
         $status = Get-CfnGuiStatus -InstallRoot $script:target.InstallRoot -TaskName $script:target.TaskName
-        if (-not $status.SettingsExists) { throw '受管配置不存在，请先应用一次完整设置。' }
+        if (-not $status.SettingsExists) {
+            $script:model.FeishuEnabled = -not [bool]$script:model.FeishuEnabled
+            Set-CfnFeishuToggleState $script:model.FeishuEnabled
+            return
+        }
         $newEnabled = -not [bool]$status.FeishuEnabled
         if (-not $newEnabled) {
             $answer = [System.Windows.Forms.MessageBox]::Show(
@@ -1421,6 +1448,22 @@ $uninstallButton.Add_Click({
         Update-CfnStatus
     }
 })
+$sendTestButton.Add_Click({
+    try {
+        $answer = [System.Windows.Forms.MessageBox]::Show($script:form,
+            '向已保存配置指定的飞书会话发送一条固定测试消息，不包含任务内容。仍遵循运行计划和通知开关。是否发送？',
+            '确认发送测试通知', 'YesNo', 'Question')
+        if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+        Set-CfnBusy $true
+        $message = & (Join-Path $PSScriptRoot 'Send-TestNotification.ps1') -InstallRoot $script:target.InstallRoot -Confirm:$false
+        [void][System.Windows.Forms.MessageBox]::Show($script:form, [string]$message, '连接测试', 'OK', 'Information')
+    } catch {
+        [void][System.Windows.Forms.MessageBox]::Show($script:form, $_.Exception.Message, '连接测试未完成', 'OK', 'Warning')
+    } finally {
+        Set-CfnBusy $false
+        Update-CfnStatus
+    }
+})
 $closeButton.Add_Click({ $script:form.Close() })
 
 $script:form = $form
@@ -1429,6 +1472,7 @@ $script:model = $model
 $script:taskNameText = $taskNameText
 $script:installRootText = $installRootText
 $script:sourceLabel = $sourceLabel
+$script:deliverySummaryLabel = $deliverySummaryLabel
 $script:chatIdText = $chatIdText
 $script:showChatCheck = $showChatCheck
 $script:larkCliText = $larkCliText
@@ -1471,6 +1515,7 @@ $script:instantDeliveryButton = $instantDeliveryButton
 $script:instantDeliveryHint = $instantDeliveryHint
 $script:feishuToggleButton = $feishuToggleButton
 $script:installButton = $installButton
+$script:sendTestButton = $sendTestButton
 $script:uninstallButton = $uninstallButton
 $script:installerPath = $installerPath
 $script:uninstallerPath = $uninstallerPath

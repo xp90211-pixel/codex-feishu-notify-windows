@@ -151,11 +151,11 @@ git switch main
 git pull --ff-only
 
 # 本地预检：同时生成 ZIP 与一键安装器，并执行真实解包/覆盖重装冒烟测试
-pwsh -File .\tests\Test-OneClickInstaller.ps1 -Version 0.5.0-test
-pwsh -File .\scripts\New-OneClickInstaller.ps1 -Version 0.5.0
+pwsh -File .\tests\Test-OneClickInstaller.ps1 -Version 0.6.0-test
+pwsh -File .\scripts\New-OneClickInstaller.ps1 -Version 0.6.0
 
-git tag -a v0.5.0 -m "Codex Feishu Notify for Windows v0.5.0"
-git push origin v0.5.0
+git tag -a v0.6.0 -m "Codex Feishu Notify for Windows v0.6.0"
+git push origin v0.6.0
 ```
 
 推送符合 `v*` 的标签后，`.github/workflows/release.yml` 会再次执行项目测试和安装器冒烟测试，并自动创建或更新 Release：
@@ -178,3 +178,5 @@ git push origin v0.5.0
 - [ ] 时间窗、升级、卸载和回滚文档与代码一致。
 - [ ] `CHANGELOG.md` 和版本标签一致。
 - [ ] Release 同时包含 ZIP、setup EXE 和各自的 SHA-256 文件，未签名状态已在说明中明确披露。
+
+v0.6 发布前还须运行 Test-Reliability.ps1 和 Test-InstallTransaction.ps1（PowerShell 7 / 5.1）。新增发布文件必须明确登记到 release-files.txt；New-ReleasePackage 与 New-OneClickInstaller 会校验成品 ZIP，不再递归打包整个源码目录。
