@@ -62,6 +62,19 @@ try {
     Assert-Install ((Export-ScheduledTask -TaskName $testName) -ceq $taskBefore) 'Saving an unrelated setting changed task XML.'
     Assert-Install ((Get-FileHash $configPath).Hash -eq $configHash -and (Get-FileHash $hooksPath).Hash -eq $hooksHash) 'Settings-only save rewrote Codex configuration or hooks.'
 
+    # Simulate a published v0.6.0 PowerShell task and completion entry point.
+    $legacyAction = New-ScheduledTaskAction -Execute (Get-Process -Id $PID).Path -Argument ('-NoProfile -File "{0}"' -f (Join-Path $installRoot 'drain.ps1')) -WorkingDirectory $installRoot
+    Set-ScheduledTask -TaskName $testName -Action $legacyAction | Out-Null
+    $legacyLine = 'notify = ' + (ConvertTo-CfnTomlArray @((Get-Process -Id $PID).Path, '-File', (Join-Path $installRoot 'notify.ps1')))
+    [IO.File]::WriteAllText($configPath, (Set-CfnNotifyLine (Read-CfnUtf8File $configPath) $legacyLine), (New-Object Text.UTF8Encoding($false)))
+    & $installer -InstallRoot $installRoot -Confirm:$false
+    Assert-Install ((Get-ScheduledTask -TaskName $testName).Actions[0].Execute -ceq (Join-Path $installRoot 'notification-host.exe')) 'Legacy task was not migrated to the no-console host.'
+    $migrated = @(ConvertFrom-CfnNotifyLine (Get-CfnNotifyRecord (Read-CfnUtf8File $configPath)).Line)
+    Assert-Install ($migrated.Count -eq 2 -and $migrated[1] -ceq 'notify') 'Legacy notify was not migrated.'
+    $taskBefore = Export-ScheduledTask -TaskName $testName
+    $configHash = (Get-FileHash $configPath).Hash
+    $hooksHash = (Get-FileHash $hooksPath).Hash
+    $hostHash = (Get-FileHash (Join-Path $installRoot 'notification-host.exe')).Hash
     $settingsHash = (Get-FileHash $settingsPath).Hash
     $global:CfnTestFailRegistration = $true
     $failed = $false
@@ -69,6 +82,7 @@ try {
     Assert-Install $failed 'Injected deployment failure did not surface.'
     Assert-Install ((Get-FileHash $settingsPath).Hash -eq $settingsHash -and (Get-FileHash $configPath).Hash -eq $configHash -and (Get-FileHash $hooksPath).Hash -eq $hooksHash) 'Rollback did not restore exact configuration bytes.'
     Assert-Install ((Export-ScheduledTask -TaskName $testName) -ceq $taskBefore) 'Rollback did not restore task XML.'
+    Assert-Install ((Get-FileHash (Join-Path $installRoot 'notification-host.exe')).Hash -ceq $hostHash) 'Rollback did not restore the exact host binary.'
     Assert-Install (-not (Get-CfnSettings $installRoot).ScheduleEnabled) 'Rollback re-enabled scheduled delivery.'
 
     # A same-path installed custom calendar is valid; excessive calendars fail
@@ -94,6 +108,37 @@ try {
         & (Get-Process -Id $PID).Path -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $projectRoot 'scripts\Test-Configuration.ps1') -InstallRoot $installRoot | Out-Null
         Assert-Install ($LASTEXITCODE -eq 0) 'Diagnostics did not infer the stored custom Codex home and task.'
     } finally { $env:CODEX_HOME = $customCodexHome }
+
+    # Simulate the existing GUI-subsystem launcher without ever executing it.
+    $hostPath = Join-Path $installRoot 'notification-host.exe'
+    Copy-Item -LiteralPath (Join-Path $env:WINDIR 'System32\whoami.exe') -Destination $hostPath
+    $hostAction = New-ScheduledTaskAction -Execute $hostPath -Argument 'drain' -WorkingDirectory $installRoot
+    Set-ScheduledTask -TaskName $testName -Action $hostAction | Out-Null
+    $hostTask = Get-ScheduledTask -TaskName $testName
+    Assert-Install (Test-CfnTaskOwnership $hostTask $installRoot) 'Existing no-console host was not recognized.'
+    Assert-Install (-not (Test-CfnTaskOwnership $hostTask (Join-Path $testRoot 'unrelated'))) 'Same-name host in another installation was incorrectly claimed.'
+    Import-Module (Join-Path $projectRoot 'src\CodexFeishuNotify.Gui.psm1') -Force -DisableNameChecking
+    Assert-Install ((Get-CfnGuiTarget -TaskName $testName).InstallRoot -ceq $installRoot) 'GUI did not discover the no-console installation.'
+    Import-Module (Join-Path $projectRoot 'src\CodexFeishuNotify.psm1') -Force -DisableNameChecking
+    $nestedNotify = ConvertTo-Json -InputObject @($hostPath, 'notify') -Compress
+    $wrapper = @('fixture-wrapper.exe', '--previous-notify', $nestedNotify)
+    $wrapperLine = 'notify = ' + (ConvertTo-CfnTomlArray $wrapper)
+    [IO.File]::WriteAllText($configPath, (Set-CfnNotifyLine (Read-CfnUtf8File $configPath) $wrapperLine), (New-Object Text.UTF8Encoding($false)))
+    & $installer -InstallRoot $installRoot -Confirm:$false
+    $hostTask = Get-ScheduledTask -TaskName $testName
+    Assert-Install ($hostTask.Actions[0].Execute -ceq $hostPath -and $hostTask.Actions[0].Arguments -ceq 'drain') 'Upgrade discarded the no-console task launcher.'
+    $actualWrapper = @(ConvertFrom-CfnNotifyLine (Get-CfnNotifyRecord (Read-CfnUtf8File $configPath)).Line)
+    Assert-Install (($actualWrapper | ConvertTo-Json -Compress) -ceq ($wrapper | ConvertTo-Json -Compress)) 'Upgrade duplicated or discarded the existing notify wrapper.'
+    Assert-Install (-not (Test-Path -LiteralPath (Join-Path $installRoot 'previous-notify.json'))) 'Upgrade chained the notifier to itself.'
+    $hooks = Read-CfnUtf8File $hooksPath | ConvertFrom-Json
+    foreach ($event in @('PermissionRequest', 'PostToolUse', 'UserPromptSubmit', 'SessionStart', 'Stop')) {
+        $handler = $hooks.hooks.$event[0].hooks[0]
+        Assert-Install (-not $handler.async -and $handler.commandWindows.StartsWith("& '")) 'Upgrade did not preserve no-console hooks with synchronous state ordering.'
+    }
+    & $installer -InstallRoot $installRoot -SettingsOnly -ScheduleStart '19:10' -Confirm:$false
+    Assert-Install ((Get-ScheduledTask -TaskName $testName).Actions[0].Execute -ceq $hostPath) 'Saving a new schedule discarded the no-console launcher.'
+    & (Get-Process -Id $PID).Path -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $projectRoot 'scripts\Test-Configuration.ps1') -InstallRoot $installRoot | Out-Null
+    Assert-Install ($LASTEXITCODE -eq 0) 'Diagnostics rejected the no-console notification paths.'
 
     $failed = $false
     try { & $uninstaller -InstallRoot $installRoot -TaskName 'Unrelated.Task' -Confirm:$false } catch { $failed = $true }

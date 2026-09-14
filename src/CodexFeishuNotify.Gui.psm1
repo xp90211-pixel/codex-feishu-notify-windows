@@ -27,6 +27,11 @@ function Get-CfnGuiTaskInstallRoot {
     if ($null -eq $Task) { return '' }
     foreach ($action in @($Task.Actions)) {
         $arguments = [string]$action.Arguments
+        if ($arguments -ceq 'drain' -and [IO.Path]::GetFileName([string]$action.Execute) -ieq 'notification-host.exe') {
+            $hostRoot = Split-Path -Parent ([string]$action.Execute)
+            if ((Test-Path -LiteralPath ([string]$action.Execute) -PathType Leaf) -and
+                (Test-Path -LiteralPath (Join-Path $hostRoot 'drain.ps1') -PathType Leaf)) { return $hostRoot }
+        }
         $match = [regex]::Match($arguments, '(?i)(?:^|\s)-File\s+"(?<path>[^"]+)"')
         if (-not $match.Success) {
             $match = [regex]::Match($arguments, '(?i)(?:^|\s)-File\s+(?<path>\S+)')

@@ -142,11 +142,48 @@ function Merge-CfnObject {
     }
 }
 
+function New-CfnNotificationHost {
+    param([Parameter(Mandatory = $true)] [string] $SourcePath, [Parameter(Mandatory = $true)] [string] $OutputPath)
+    $compiler = @('Framework64', 'Framework') | ForEach-Object {
+        Join-Path $env:WINDIR "Microsoft.NET\$_\v4.0.30319\csc.exe"
+    } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $compiler) { throw 'The Windows .NET Framework C# compiler was not found.' }
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $compiler
+    $start.Arguments = (@('/nologo', '/target:winexe', '/platform:anycpu', '/optimize+', '/warnaserror+', "/out:$OutputPath", $SourcePath) |
+        ForEach-Object { ConvertTo-CfnNativeArgument $_ }) -join ' '
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $start
+    try {
+        [void]$process.Start()
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Notification host compilation timed out.' }
+        [void]$stdout.GetAwaiter().GetResult()
+        [void]$stderr.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) { throw 'Notification host compilation failed.' }
+    } finally { $process.Dispose() }
+}
+
 function Test-CfnTaskOwnership {
     param([AllowNull()] $Task, [Parameter(Mandatory = $true)] [string] $InstallRoot)
     if ($null -eq $Task) { return $false }
     $actions = @($Task.Actions)
     if ($actions.Count -ne 1) { return $false }
+    # Preserve an existing no-console launcher, but never claim another task
+    # merely because its executable has the same filename.
+    if ([string]$actions[0].Arguments -ceq 'drain') {
+        try {
+            $hostPath = [IO.Path]::GetFullPath((Join-Path $InstallRoot 'notification-host.exe'))
+            return [IO.Path]::GetFullPath([string]$actions[0].Execute) -ieq $hostPath -and
+                (Test-Path -LiteralPath $hostPath -PathType Leaf) -and
+                (Test-Path -LiteralPath (Join-Path $InstallRoot 'drain.ps1') -PathType Leaf)
+        } catch { return $false }
+    }
     $match = [regex]::Match([string]$actions[0].Arguments, '(?i)(?:^|\s)-File\s+(?:"(?<path>[^"]+)"|(?<path>\S+))(?:\s|$)')
     if (-not $match.Success) { return $false }
     return [IO.Path]::GetFullPath($match.Groups['path'].Value) -ieq [IO.Path]::GetFullPath((Join-Path $InstallRoot 'drain.ps1'))
@@ -220,4 +257,4 @@ function Test-CfnScheduleTriggers {
     return ($expected -join ';') -ceq ($actual -join ';')
 }
 
-Export-ModuleMember -Function Read-CfnUtf8File, ConvertFrom-CfnToml, ConvertFrom-CfnNotifyLine, Get-CfnNotifyRecord, Set-CfnNotifyLine, Merge-CfnObject, Test-CfnTaskOwnership, Get-CfnSchedulePlan, New-CfnScheduledTriggers, Test-CfnScheduleTriggers
+Export-ModuleMember -Function Read-CfnUtf8File, ConvertFrom-CfnToml, ConvertFrom-CfnNotifyLine, Get-CfnNotifyRecord, Set-CfnNotifyLine, Merge-CfnObject, New-CfnNotificationHost, Test-CfnTaskOwnership, Get-CfnSchedulePlan, New-CfnScheduledTriggers, Test-CfnScheduleTriggers

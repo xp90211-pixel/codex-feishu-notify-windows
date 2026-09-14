@@ -29,6 +29,14 @@ jobs:
         shell: pwsh
         run: ./tests/Test-Reliability.ps1
 
+      - name: No-console host on PowerShell 7
+        shell: pwsh
+        run: ./tests/Test-NotificationHost.ps1
+
+      - name: No-console host on Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/Test-NotificationHost.ps1
+
       - name: Reliability on Windows PowerShell 5.1
         shell: powershell
         run: ./tests/Test-Reliability.ps1

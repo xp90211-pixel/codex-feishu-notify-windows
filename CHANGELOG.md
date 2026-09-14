@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1 — 2026-09-14
+
+- Include the no-console notification host as auditable source and compile it offline with the Windows .NET Framework compiler during installation.
+- Run scheduled delivery and completion/dispatch commands through a GUI-subsystem executable with CreateNoWindow; reuse the existing lifecycle-hook shell.
+- Preserve existing notification wrappers, recognize legacy task actions, and retain console-free execution when saving schedules or upgrading.
+- Back up and restore host source/binaries transactionally; cover native argv, console handles, output pipes and migration on PowerShell 7 and Windows PowerShell 5.1.
+
 ## 0.6.0 — 2026-09-14
 
 - Fix root/multiline TOML and UTF-8 handling with an offline parser and transactional installation rollback.

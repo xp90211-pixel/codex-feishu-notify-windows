@@ -44,6 +44,7 @@ function Test-NotifyCommandTarget {
 }
 
 $modulePath = Join-Path $InstallRoot 'CodexFeishuNotify.psm1'
+Add-Check 'notification_host_exists' (Test-Path -LiteralPath (Join-Path $InstallRoot 'notification-host.exe') -PathType Leaf) 'GUI-subsystem notification launcher'
 Add-Check 'module_exists' (Test-Path -LiteralPath $modulePath) $modulePath
 if (Test-Path -LiteralPath $modulePath) {
     Import-Module $modulePath -Force -DisableNameChecking
@@ -158,7 +159,8 @@ if (Test-Path -LiteralPath $configPath) {
             $command = @(ConvertFrom-CfnNotifyLine $record.Line)
             $hookFound = Test-NotifyCommandTarget $command @(
                 (Join-Path $InstallRoot 'notify.ps1'),
-                (Join-Path $InstallRoot 'dispatch.ps1')
+                (Join-Path $InstallRoot 'dispatch.ps1'),
+                (Join-Path $InstallRoot 'notification-host.exe')
             )
         }
     } catch {}

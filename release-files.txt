@@ -22,6 +22,7 @@ docs/migration-from-local.md
 docs/releases/v0.4.0.md
 docs/releases/v0.5.0.md
 docs/releases/v0.6.0.md
+docs/releases/v0.6.1.md
 docs/remote-control-evaluation.md
 docs/review-remediation.md
 installer/Bootstrapper.cs
@@ -42,11 +43,13 @@ src/dispatch.ps1
 src/drain.ps1
 src/hook.ps1
 src/notify.ps1
+src/notification-host.cs
 src/vendor/README.md
 src/vendor/Tommy.LICENSE
 src/vendor/Tommy.dll
 tests/Test-InstallTransaction.ps1
 tests/Test-ManualTaskControl.ps1
+tests/Test-NotificationHost.ps1
 tests/Test-OneClickInstaller.ps1
 tests/Test-Project.ps1
 tests/Test-Reliability.ps1

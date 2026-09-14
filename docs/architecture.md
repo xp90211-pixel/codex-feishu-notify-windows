@@ -2,6 +2,8 @@
 
 ## 生命周期、入队与投递
 
+Windows 入口使用离线编译的 GUI 子系统 `notification-host.exe`，固定允许 `notify`、`dispatch`、`drain` 三种模式，不接受任意脚本或命令。它以 `UseShellExecute=false`、`CreateNoWindow=true` 创建 PowerShell，严格处理 Windows argv 引号并并发读取 stdout/stderr。计划任务调用 `host drain`，notify 命令链调用 `host notify/dispatch`；生命周期 Hook 则复用 Codex 已有的 PowerShell shell。第三方包装器自身的启动行为保持原样。源文件与 EXE 均纳入安装事务备份。
+
 ### 1. Codex 生命周期 Hook
 
 安装器把本项目处理器合并进用户级 `~/.codex/hooks.json`，不覆盖其他处理器：

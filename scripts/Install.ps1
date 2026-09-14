@@ -86,7 +86,7 @@ function Test-ContainsInstalledNotifier {
         [string] $Root
     )
     $joined = (@($Command) | ForEach-Object { [string]$_ }) -join "`n"
-    foreach ($name in @('notify.ps1', 'dispatch.ps1')) {
+    foreach ($name in @('notify.ps1', 'dispatch.ps1', 'notification-host.exe')) {
         $candidate = Join-Path $Root $name
         if ($joined.IndexOf($candidate, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
     }
@@ -222,10 +222,10 @@ if ($null -ne $existingResolved) {
         if (-not $PSBoundParameters.ContainsKey($name)) { $value = Get-CfnProperty $existingResolved $parameterProperties[$name]
             if ($name -eq 'HolidayRegion' -and $value -notin @('Auto', 'SG', 'CN', 'None')) { $value = 'Auto' }
             if ($name -eq 'AllDayWeekdays') { $value = [string[]]@($existingResolved.AllDayWeekdays) }
-            Set-Variable -Name $name -Value $value }
+            Set-Variable -Name $name -Value $value -WhatIf:$false -Confirm:$false }
     }
     foreach ($name in $negativeProperties.Keys) {
-        if (-not $PSBoundParameters.ContainsKey($name)) { Set-Variable -Name $name -Value (-not [bool](Get-CfnProperty $existingResolved $negativeProperties[$name])) }
+        if (-not $PSBoundParameters.ContainsKey($name)) { Set-Variable -Name $name -Value (-not [bool](Get-CfnProperty $existingResolved $negativeProperties[$name])) -WhatIf:$false -Confirm:$false }
     }
     if (-not $PSBoundParameters.ContainsKey('HolidayCalendarPath') -and -not $PSBoundParameters.ContainsKey('HolidayRegion') -and
         $existingResolved.HolidayRegion -notin @('Auto', 'None', 'CN', 'SG')) {
@@ -246,8 +246,8 @@ if (-not $PSBoundParameters.ContainsKey('DisableScheduledTask') -and $existingTa
     $DisableScheduledTask = ([string]$existingTask.State -eq 'Disabled')
 }
 if ($SettingsOnly) {
-    if ($null -eq $priorState -or -not $existingTask -or (Get-CfnProperty $priorState 'version' '') -ne '0.6.0') {
-        throw 'Install or upgrade the notification runtime first with Install Notification; settings-only saving requires v0.6.0.'
+    if ($null -eq $priorState -or -not $existingTask -or (Get-CfnProperty $priorState 'version' '') -ne '0.6.1') {
+        throw 'Install or upgrade the notification runtime first with Install Notification; settings-only saving requires v0.6.1.'
     }
     $SkipCodexHook = $true
     $SkipLifecycleHooks = $true
@@ -317,22 +317,14 @@ if (-not (Test-Path -LiteralPath $configPath)) {
     $configText = Read-CfnUtf8File $configPath
 }
 
-$hookCommand = @(
-    $powerShellPath, '-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
-    '-File', (Join-Path $InstallRoot 'notify.ps1')
-)
-$dispatchCommand = @(
-    $powerShellPath, '-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
-    '-File', (Join-Path $InstallRoot 'dispatch.ps1')
-)
+$hookCommand = @((Join-Path $InstallRoot 'notification-host.exe'), 'notify')
+$dispatchCommand = @((Join-Path $InstallRoot 'notification-host.exe'), 'dispatch')
 $hooksPath = Join-Path $codexRoot 'hooks.json'
 $hooksText = if (Test-Path -LiteralPath $hooksPath -PathType Leaf) {
     Get-Content -LiteralPath $hooksPath -Raw -Encoding UTF8
 } else { '' }
-$lifecycleCommand = ConvertTo-CfnCommandLine @(
-    $powerShellPath, '-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
-    '-File', (Join-Path $InstallRoot 'hook.ps1')
-)
+# Reuse the existing PowerShell hook shell instead of spawning another console.
+$lifecycleCommand = "& '" + (Join-Path $InstallRoot 'hook.ps1').Replace("'", "''") + "'"
 $updatedHooksText = if ($SkipLifecycleHooks) { '' } else {
     Get-CfnUpdatedHooksJson $hooksText $lifecycleCommand $InstallRoot
 }
@@ -366,7 +358,13 @@ if (-not $SkipCodexHook -and $originalNotify.Found) {
             }
 
             if ($nestedCommand.Count -gt 0 -and (Test-ContainsInstalledNotifier $nestedCommand $InstallRoot)) {
-                $existingCommand[$previousFlagIndex + 1] = ConvertTo-CommandJson $hookCommand
+                $existingPreviousPath = Join-Path $InstallRoot 'previous-notify.json'
+                if (Test-Path -LiteralPath $existingPreviousPath) {
+                    $previousNotifyCommand = @(Read-CfnUtf8File $existingPreviousPath | ConvertFrom-Json)
+                    $existingCommand[$previousFlagIndex + 1] = ConvertTo-CommandJson $dispatchCommand
+                } else {
+                    $existingCommand[$previousFlagIndex + 1] = ConvertTo-CommandJson $hookCommand
+                }
                 $newNotifyCommand = $existingCommand
                 $hookMode = 'existing-wrapper-upgraded'
                 $isUpgrade = $true
@@ -385,12 +383,13 @@ if (-not $SkipCodexHook -and $originalNotify.Found) {
                 $hookMode = 'existing-wrapper-repaired'
             }
         } elseif (Test-ContainsInstalledNotifier $existingCommand $InstallRoot) {
-            $newNotifyCommand = $existingCommand
+            $newNotifyCommand = $hookCommand
             $hookMode = 'already-installed'
             $isUpgrade = $true
             $existingPreviousPath = Join-Path $InstallRoot 'previous-notify.json'
             if (Test-Path -LiteralPath $existingPreviousPath) {
-                try { $previousNotifyCommand = @(Get-Content -LiteralPath $existingPreviousPath -Raw -Encoding UTF8 | ConvertFrom-Json) } catch {}
+                $previousNotifyCommand = @(Read-CfnUtf8File $existingPreviousPath | ConvertFrom-Json)
+                $newNotifyCommand = $dispatchCommand
             }
         } elseif (Test-ContainsLegacyNotifier $existingCommand) {
             $newNotifyCommand = $hookCommand
@@ -411,8 +410,7 @@ $hooksBackup = ''
 $taskBackup = ''
 $deploymentBackup = ''
 
-    $actionArguments = '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File "{0}"' -f (Join-Path $InstallRoot 'drain.ps1')
-    $action = New-ScheduledTaskAction -Execute $powerShellPath -Argument $actionArguments -WorkingDirectory $InstallRoot
+    $action = New-ScheduledTaskAction -Execute (Join-Path $InstallRoot 'notification-host.exe') -Argument 'drain' -WorkingDirectory $InstallRoot
     $schedulePlan = @(Get-CfnSchedulePlan $ScheduleStart $ScheduleEnd $IntervalMinutes $AllDayWeekdays $holidayCalendar)
     $allTriggers = @(New-CfnScheduledTriggers $schedulePlan)
     $weeklyTriggerCount = @($schedulePlan | Where-Object Kind -eq 'Weekly').Count
@@ -434,7 +432,7 @@ $hooksExisted = Test-Path -LiteralPath $hooksPath
 if ($PSCmdlet.ShouldProcess($InstallRoot, 'Install or save Codex-to-Feishu notifier')) {
     Ensure-CfnDirectory $InstallRoot
     Ensure-CfnDirectory $backupRoot
-    $managedNames = @('CodexFeishuNotify.psm1', 'notify.ps1', 'hook.ps1', 'drain.ps1', 'dispatch.ps1', 'settings.local.json', 'holidays.local.json', 'previous-notify.json', 'install-state.json', 'spool\state\runtime-control.json', 'spool\state\manual-delivery.json')
+    $managedNames = @('CodexFeishuNotify.psm1', 'notify.ps1', 'hook.ps1', 'drain.ps1', 'dispatch.ps1', 'notification-host.cs', 'notification-host.exe', 'settings.local.json', 'holidays.local.json', 'previous-notify.json', 'install-state.json', 'spool\state\runtime-control.json', 'spool\state\manual-delivery.json')
     $existingManaged = @($managedNames | Where-Object { Test-Path -LiteralPath (Join-Path $InstallRoot $_) -PathType Leaf })
     if ($existingManaged.Count -gt 0) {
         $deploymentBackup = Join-Path $backupRoot "deployment-$stamp"
@@ -466,9 +464,10 @@ if ($PSCmdlet.ShouldProcess($InstallRoot, 'Install or save Codex-to-Feishu notif
     $hooksTouched = $false
     try {
     if (-not $SettingsOnly) {
-    foreach ($name in @('CodexFeishuNotify.psm1', 'notify.ps1', 'hook.ps1', 'drain.ps1', 'dispatch.ps1')) {
+    foreach ($name in @('CodexFeishuNotify.psm1', 'notify.ps1', 'hook.ps1', 'drain.ps1', 'dispatch.ps1', 'notification-host.cs')) {
         Copy-Item -LiteralPath (Join-Path $sourceRoot $name) -Destination (Join-Path $InstallRoot $name) -Force
     }
+    New-CfnNotificationHost -SourcePath (Join-Path $InstallRoot 'notification-host.cs') -OutputPath (Join-Path $InstallRoot 'notification-host.exe')
 
     }
     $settingsObject = [ordered]@{
@@ -641,7 +640,7 @@ if ($PSCmdlet.ShouldProcess($InstallRoot, 'Install or save Codex-to-Feishu notif
     $stateTaskBackup = if ($isUpgrade -and $priorTaskBackup) { $priorTaskBackup } else { $taskBackup }
     $state = [ordered]@{
         schema = 2
-        version = '0.6.0'
+        version = '0.6.1'
         installed_at = (Get-Date).ToUniversalTime().ToString('o')
         install_root = $InstallRoot
         task_name = $TaskName

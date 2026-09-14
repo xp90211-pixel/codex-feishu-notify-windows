@@ -21,7 +21,7 @@
 
 | 版本 | 推荐下载 | 校验文件 | 便携包 |
 |---|---|---|---|
-| [`v0.6.0`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.6.0) | [`setup.exe`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.0/codex-feishu-notify-windows-v0.6.0-setup.exe) | [`setup.exe.sha256`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.0/codex-feishu-notify-windows-v0.6.0-setup.exe.sha256) | [`ZIP`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.0/codex-feishu-notify-windows-v0.6.0.zip) |
+| [`v0.6.1`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.6.1) | [`setup.exe`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.1/codex-feishu-notify-windows-v0.6.1-setup.exe) | [`setup.exe.sha256`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.1/codex-feishu-notify-windows-v0.6.1-setup.exe.sha256) | [`ZIP`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.1/codex-feishu-notify-windows-v0.6.1.zip) |
 
 后续版本请以 [Releases / Latest](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 为准。Release 同时提供 setup EXE、便携 ZIP 和各自的 SHA-256 文件。
 
@@ -48,7 +48,8 @@
 - 可仅通知已登记在 Codex 桌面的任务：解析已知 JSON 字段；明确为 false 或不认识的结构不会放行。这是过滤规则，不是身份授权。
 - 飞书通知采用“始终”语义，不跟随 PC 的“仅 Codex 不在前台时通知”。
 - 运行计划与飞书投递设为两个独立手动开关：停用计划不改飞书配置，关闭飞书也不关闭 PC 通知。
-- PC 端使用隐藏的 Windows Toast；默认只在 Codex 不处于前台时显示，不弹出命令行窗口。
+- 额外的 Windows Toast 默认只在 Codex 不处于前台时显示，可单独关闭。
+- 完成通知与计划投递经 `notification-host.exe` 无控制台启动；生命周期 Hook 复用现有 shell，CLI 子进程使用 `CreateNoWindow`，避免周期性命令行闪窗。
 - 使用官方 `SessionStart`、`PermissionRequest`、`PostToolUse`、`UserPromptSubmit` 和 `Stop` 生命周期 Hook：等待授权可提醒并在恢复后撤销，新会话的完成通知须经过两阶段门。
 - 通知钩子只进行本地原子入队，不直接联网，也绝不启动计划任务。
 - 计划任务是真正的每日触发器，默认仅在 18:40 至次日 02:00 每分钟排空队列。
@@ -90,7 +91,8 @@ flowchart LR
 
 - Windows 10/11。
 - Codex 支持用户级 `notify` 与生命周期 Hooks；新安装后需重新开启 Codex 才能完整加载 Hook。
-- PowerShell 7 优先；缺失时安装器回退到 Windows PowerShell。
+- PowerShell 7 优先；缺失时回退到 Windows PowerShell 5.1。
+- Windows 自带的 .NET Framework 4.x C# 编译器：安装通知时离线生成无控制台启动器，不下载或安装其他编译工具。
 - `lark-cli` 已安装，并准备好可代表机器人发送消息的本地配置。
 - 已知目标会话 ID，例如 `oc_xxx`。不要把真实 ID 提交到 Git。
 
@@ -111,15 +113,15 @@ flowchart LR
 ## 一键安装（推荐）
 
 1. 先完成上面的飞书连接器、`lark-cli` profile 和目标会话 ID 准备。
-2. 从 [v0.6.0 Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.6.0) 下载 `codex-feishu-notify-windows-v0.6.0-setup.exe` 和同名 `.sha256` 文件；更新版本请改用 [Latest Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 中对应的两个文件。
+2. 从 [v0.6.1 Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.6.1) 下载 `codex-feishu-notify-windows-v0.6.1-setup.exe` 和同名 `.sha256` 文件；更新版本请改用 [Latest Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 中对应的两个文件。
 3. 在 PowerShell 中核对安装器哈希：
 
    ```powershell
-   (Get-FileHash .\codex-feishu-notify-windows-v0.6.0-setup.exe -Algorithm SHA256).Hash
-   Get-Content .\codex-feishu-notify-windows-v0.6.0-setup.exe.sha256
+   (Get-FileHash .\codex-feishu-notify-windows-v0.6.1-setup.exe -Algorithm SHA256).Hash
+   Get-Content .\codex-feishu-notify-windows-v0.6.1-setup.exe.sha256
    ```
 
-4. 两边哈希一致后双击安装器。它不要求管理员权限，会把管理程序安装到 `%LOCALAPPDATA%\Programs\CodexFeishuNotify\v0.6.0`，创建开始菜单快捷方式并自动打开“Codex 飞书通知设置”。
+4. 两边哈希一致后双击安装器。它不要求管理员权限，会把管理程序安装到 `%LOCALAPPDATA%\Programs\CodexFeishuNotify\v0.6.1`，创建开始菜单快捷方式并自动打开“Codex 飞书通知设置”。
 5. 在图形设置器中填写飞书会话 ID，核对自动找到的 `lark-cli` 与 profile，设置运行计划，然后点击“安装通知”并确认变更。
 6. 安装完成后重新打开 Codex，在 Hook 管理界面审查、信任并启用本项目安装或更新的 Hook。
 
@@ -238,7 +240,7 @@ powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass `
 
 启动设置器只读取配置。两个入口各司其职：
 
-- “保存设置”：只更新私有设置；仅时间规则或计划启用状态变化时重建任务，不部署脚本、不改写 Codex Hook，无需重新信任。旧运行时请先升级到 v0.6。
+- “保存设置”：只更新私有设置；仅时间规则或计划启用状态变化时重建任务，不部署脚本、不改写 Codex Hook，无需重新信任。旧运行时请先升级到 v0.6.1。
 - “安装通知”：首次部署、升级或修复；备份并部署运行文件、合并 Hook、更新根级 notify 和计划任务。完成后重新打开 Codex，审查并信任变化的 Hook。
 - “发送测试通知”：确认后才向**已保存配置**指定的会话发送一条固定测试文本，不含任务内容；仍遵循通知总开关和运行时段。
 - 首页说明当前为何未投递；状态页显示下一次允许发送、最近实际发送时间、飞书 message ID 和有效状态计数。
@@ -252,6 +254,15 @@ powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass `
 ```powershell
 pwsh -NoProfile -File .\scripts\Settings-Gui.ps1 -ValidateOnly
 ```
+
+## 防命令行闪窗
+
+v0.6.1 将本机验证过的修补纳入标准安装和升级。`notification-host.cs` 随源码和安装包提供，在“安装通知”时离线编译为 Windows GUI 子系统 EXE；仅使用 `-WindowStyle Hidden` 不能消除控制台创建瞬间的闪现。
+
+- 计划任务执行 `notification-host.exe drain`，根级 `notify` 通过同一个启动器调用通知或转发脚本。
+- 五个生命周期 Hook 在现有 PowerShell shell 内直接调用 `hook.ps1`，不嵌套另一个 PowerShell；仍然需要在 Codex 中审查并信任更新的定义。
+- 保存时间计划、手动启停和再次升级不会换回会闪窗的启动方式；安装失败可恢复旧 EXE、脚本、配置和任务。
+- 保留已存在的第三方通知包装器；其自身窗口行为不由本项目改变。Windows Toast 是有意显示的提醒，与命令行闪窗不同。
 
 ## 升级
 

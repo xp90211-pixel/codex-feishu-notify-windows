@@ -17,7 +17,14 @@ if (-not $currentPowerShell) {
 }
 
 try {
-    & $currentPowerShell -NoLogo -NoProfile -NonInteractive -File (Join-Path $IntegrationRoot 'notify.ps1') @NotificationPayload
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $currentPowerShell
+    $start.Arguments = (@('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $IntegrationRoot 'notify.ps1')) + @($NotificationPayload) |
+        ForEach-Object { ConvertTo-CfnNativeArgument $_ }) -join ' '
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $child = [Diagnostics.Process]::Start($start)
+    try { $child.WaitForExit() } finally { $child.Dispose() }
 } catch {
     Write-CfnLog $IntegrationRoot 'dispatch' 'project_hook_failed' '' $_.Exception.Message
 }
