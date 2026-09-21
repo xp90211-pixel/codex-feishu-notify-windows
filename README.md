@@ -7,7 +7,7 @@
 
 一个面向 Windows 的 Codex 通知桥接与图形化管理工具：捕捉本轮回复完成和等待授权事件，通过本地已认证的 `lark-cli` 发送到飞书，同时提供独立的 Windows Toast、运行计划、节假日和手动启停控制。
 
-开发中 0.7.0 已加入“只提醒时段内新状态”和可选的“全部任务已停止”飞书汇总；下方 v0.6.1 下载包不含这些新功能。配置与迁移见 [通知新鲜度说明](docs/notification-freshness.md)。
+v0.7.0 加入“只提醒时段内新状态”和可选的“全部任务已停止”飞书汇总。升级保留既有选择；旧安装需要显式开启新选项，配置与迁移见 [通知新鲜度说明](docs/notification-freshness.md)。
 
 适合 Codex 只能运行在某台固定 PC、远程重连延迟较高，希望从飞书查看任务进度的场景。
 
@@ -23,7 +23,7 @@
 
 | 版本 | 推荐下载 | 校验文件 | 便携包 |
 |---|---|---|---|
-| [`v0.6.1`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.6.1) | [`setup.exe`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.1/codex-feishu-notify-windows-v0.6.1-setup.exe) | [`setup.exe.sha256`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.1/codex-feishu-notify-windows-v0.6.1-setup.exe.sha256) | [`ZIP`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.1/codex-feishu-notify-windows-v0.6.1.zip) |
+| [`v0.7.0`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.7.0) | [`setup.exe`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.7.0/codex-feishu-notify-windows-v0.7.0-setup.exe) | [`setup.exe.sha256`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.7.0/codex-feishu-notify-windows-v0.7.0-setup.exe.sha256) | [`ZIP`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.7.0/codex-feishu-notify-windows-v0.7.0.zip) |
 
 后续版本请以 [Releases / Latest](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 为准。Release 同时提供 setup EXE、便携 ZIP 和各自的 SHA-256 文件。
 
@@ -115,15 +115,15 @@ flowchart LR
 ## 一键安装（推荐）
 
 1. 先完成上面的飞书连接器、`lark-cli` profile 和目标会话 ID 准备。
-2. 从 [v0.6.1 Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.6.1) 下载 `codex-feishu-notify-windows-v0.6.1-setup.exe` 和同名 `.sha256` 文件；更新版本请改用 [Latest Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 中对应的两个文件。
+2. 从 [v0.7.0 Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.7.0) 下载 `codex-feishu-notify-windows-v0.7.0-setup.exe` 和同名 `.sha256` 文件；更新版本请改用 [Latest Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 中对应的两个文件。
 3. 在 PowerShell 中核对安装器哈希：
 
    ```powershell
-   (Get-FileHash .\codex-feishu-notify-windows-v0.6.1-setup.exe -Algorithm SHA256).Hash
-   Get-Content .\codex-feishu-notify-windows-v0.6.1-setup.exe.sha256
+   (Get-FileHash .\codex-feishu-notify-windows-v0.7.0-setup.exe -Algorithm SHA256).Hash
+   Get-Content .\codex-feishu-notify-windows-v0.7.0-setup.exe.sha256
    ```
 
-4. 两边哈希一致后双击安装器。它不要求管理员权限，会把管理程序安装到 `%LOCALAPPDATA%\Programs\CodexFeishuNotify\v0.6.1`，创建开始菜单快捷方式并自动打开“Codex 飞书通知设置”。
+4. 两边哈希一致后双击安装器。它不要求管理员权限，会把管理程序安装到 `%LOCALAPPDATA%\Programs\CodexFeishuNotify\v0.7.0`，创建开始菜单快捷方式并自动打开“Codex 飞书通知设置”。
 5. 在图形设置器中填写飞书会话 ID，核对自动找到的 `lark-cli` 与 profile，设置运行计划，然后点击“安装通知”并确认变更。
 6. 安装完成后重新打开 Codex，在 Hook 管理界面审查、信任并启用本项目安装或更新的 Hook。
 

@@ -1,10 +1,10 @@
 # 只提醒新状态与全部任务停止提醒
 
-本功能属于 0.7.0 源码，尚未包含在已发布的 v0.6.1 安装包中。
+本功能自 v0.7.0 起包含在源码、便携 ZIP 和一键安装包中。
 
 ## 开启与升级
 
-从本版本源码安装或升级已有运行目录：
+从本版本源码、解压的 ZIP 或一键安装器部署的版本化管理目录，安装或升级已有运行目录：
 
 ```powershell
 .\scripts\Install.ps1 -InstallRoot '<已有通知运行目录>' -FreshNotificationsOnly -AllIdleReminder

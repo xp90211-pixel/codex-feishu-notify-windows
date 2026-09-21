@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 — Unreleased
+## 0.7.0 — 2026-09-21
 
 - Add opt-in, once-per-window Feishu reminders when all local Codex tasks stop running or need input, using bounded read-only app status checks and persistent confirmation state.
 - Add fresh-only delivery windows, stale-queue quarantine, per-thread completion coalescing, and atomic freshness checks before transport. Enabled for new installs; upgrades preserve existing choices.
