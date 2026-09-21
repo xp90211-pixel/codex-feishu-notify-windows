@@ -18,6 +18,7 @@
   },
   "delivery": {
     "enabled": true,
+    "fresh_notifications_only": true,
     "start": "18:40",
     "end": "02:00",
     "interval_minutes": 1,

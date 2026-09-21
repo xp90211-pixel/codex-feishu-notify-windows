@@ -54,7 +54,7 @@ try {
     Ensure-CfnDirectory $runtime
     Ensure-CfnDirectory $control
     $env:CFN_TEST_CONTROL = $control
-    foreach ($name in @('CodexFeishuNotify.psm1', 'drain.ps1')) { Copy-Item -LiteralPath (Join-Path $projectRoot "src\$name") -Destination $runtime }
+    foreach ($name in @('CodexFeishuNotify.psm1', 'CfnIdleReminder.psm1', 'drain.ps1')) { Copy-Item -LiteralPath (Join-Path $projectRoot "src\$name") -Destination $runtime }
     $fixtureExe = Join-Path $testRoot '模拟 CLI.exe'
     $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     & $compiler /nologo /target:exe "/out:$fixtureExe" (Join-Path $PSScriptRoot 'fixtures\FakeLarkCli.cs')
@@ -62,6 +62,7 @@ try {
     $settingsPath = Join-Path $runtime 'settings.local.json'
     $raw = Get-Content (Join-Path $projectRoot 'config\settings.example.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $raw.delivery.holiday_region = 'None'
+    $raw.delivery.fresh_notifications_only = $false # Legacy queue reliability is tested separately from fresh-only delivery.
     $raw.delivery.all_day_weekdays = @('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
     $raw.transport.require_profile = $false
     $raw.transport.chat_id = 'oc_TESTCONFIG1234'

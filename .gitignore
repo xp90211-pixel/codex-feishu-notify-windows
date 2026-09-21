@@ -1,4 +1,5 @@
 settings.local.json
+idle-reminder.settings.json
 holidays.local.json
 previous-notify.json
 install-state.json

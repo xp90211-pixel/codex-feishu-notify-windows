@@ -16,6 +16,7 @@ config/holidays.cn.2026.json
 config/holidays.sg.json
 config/settings.example.json
 docs/architecture.md
+docs/notification-freshness.md
 docs/github-publish-guide.md
 docs/holiday-calendars.md
 docs/migration-from-local.md
@@ -23,6 +24,7 @@ docs/releases/v0.4.0.md
 docs/releases/v0.5.0.md
 docs/releases/v0.6.0.md
 docs/releases/v0.6.1.md
+docs/releases/v0.7.0.md
 docs/remote-control-evaluation.md
 docs/review-remediation.md
 installer/Bootstrapper.cs
@@ -39,6 +41,7 @@ scripts/Uninstall.ps1
 src/CodexFeishuNotify.Gui.psm1
 src/CodexFeishuNotify.Management.psm1
 src/CodexFeishuNotify.psm1
+src/CfnIdleReminder.psm1
 src/dispatch.ps1
 src/drain.ps1
 src/hook.ps1
@@ -48,6 +51,9 @@ src/vendor/README.md
 src/vendor/Tommy.LICENSE
 src/vendor/Tommy.dll
 tests/Test-InstallTransaction.ps1
+tests/NotificationTestSupport.ps1
+tests/Test-AllIdleReminder.ps1
+tests/Test-FreshNotifications.ps1
 tests/Test-ManualTaskControl.ps1
 tests/Test-NotificationHost.ps1
 tests/Test-OneClickInstaller.ps1

@@ -3,6 +3,12 @@ $ErrorActionPreference = 'Stop'
 
 $IntegrationRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $IntegrationRoot 'CodexFeishuNotify.psm1') -Force -DisableNameChecking
+try {
+    Import-Module (Join-Path $IntegrationRoot 'CfnIdleReminder.psm1') -Force -DisableNameChecking
+    Save-CfnIdleEndpoint $IntegrationRoot
+} catch {
+    # Optional summary reminders must never interfere with lifecycle hooks.
+}
 $eventName = ''
 $stateLock = $null
 
@@ -32,6 +38,7 @@ try {
         $ready = Set-CfnLifecycleReady $IntegrationRoot $sessionId
         Write-CfnLog $IntegrationRoot 'hook' $(if ($ready) { 'session_ready' } else { 'session_ready_failed' }) '' $sessionId
     } elseif ($eventName -in @('PostToolUse', 'UserPromptSubmit')) {
+        [void](Set-CfnFreshThreadActivity $IntegrationRoot $settings $sessionId $turnId 'running')
         $toolEvent = if ($eventName -eq 'PostToolUse') { $event } else { $null }
         $resolved = Resolve-CfnWaitingState $IntegrationRoot $sessionId $settings.WaitingStateTtlHours -ToolEvent $toolEvent
         if ($resolved.Found) {
@@ -51,6 +58,7 @@ try {
             Write-CfnLog $IntegrationRoot 'gate' $(if ($armed) { 'armed' } else { 'arm_failed' }) '' $sessionId
         }
     } elseif ($eventName -eq 'PermissionRequest') {
+        [void](Set-CfnFreshThreadActivity $IntegrationRoot $settings $sessionId $turnId 'running')
         if (-not $settings.NotifyPermissionRequests) {
             Write-CfnLog $IntegrationRoot 'hook' 'permission_notification_disabled'
         } elseif (-not $sessionId) {
@@ -78,7 +86,11 @@ try {
                 permission_tool = if ($settings.IncludePermissionTool) { $toolName } else { '' }
             }
             $shouldNotify = $true
-            if ($settings.FeishuEnabled) {
+            $queueForFeishu = $settings.FeishuEnabled -and (Set-CfnQueueDeliveryWindow $IntegrationRoot $settings $item)
+            if ($settings.FeishuEnabled -and -not $queueForFeishu) {
+                Write-CfnLog $IntegrationRoot 'hook' 'permission_outside_window_skipped' $eventId
+            }
+            if ($queueForFeishu) {
                 $pendingRoot = Join-Path $IntegrationRoot 'spool\pending'
                 $sentRoot = Join-Path $IntegrationRoot 'spool\sent'
                 Ensure-CfnDirectory $pendingRoot
@@ -99,7 +111,7 @@ try {
                 $desktopBody = "工作区 $($item.project) 正在等待授权。"
                 if ($settings.IncludePermissionTool -and $toolName) { $desktopBody += " 工具：$toolName" }
                 [void](Show-CfnDesktopEvent $IntegrationRoot $settings 'needs-input' $desktopBody $toastTag)
-                $status = if ($settings.FeishuEnabled) { 'permission_queued' } else { 'permission_feishu_disabled_desktop_only' }
+                $status = if ($queueForFeishu) { 'permission_queued' } else { 'permission_desktop_only' }
                 Write-CfnLog $IntegrationRoot 'hook' $status $eventId
             }
         }

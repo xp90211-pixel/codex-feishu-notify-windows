@@ -5,7 +5,9 @@
 [![Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4)](#前置条件)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-一个面向 Windows 的 Codex 通知桥接与图形化管理工具：捕捉真实的任务完成和等待授权事件，通过本地已认证的 `lark-cli` 发送到飞书，同时提供独立的 Windows Toast、运行计划、节假日和手动启停控制。
+一个面向 Windows 的 Codex 通知桥接与图形化管理工具：捕捉本轮回复完成和等待授权事件，通过本地已认证的 `lark-cli` 发送到飞书，同时提供独立的 Windows Toast、运行计划、节假日和手动启停控制。
+
+v0.7.0 加入“只提醒时段内新状态”和可选的“全部任务已停止”飞书汇总。升级保留既有选择；旧安装需要显式开启新选项，配置与迁移见 [通知新鲜度说明](docs/notification-freshness.md)。
 
 适合 Codex 只能运行在某台固定 PC、远程重连延迟较高，希望从飞书查看任务进度的场景。
 
@@ -21,7 +23,7 @@
 
 | 版本 | 推荐下载 | 校验文件 | 便携包 |
 |---|---|---|---|
-| [`v0.6.1`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.6.1) | [`setup.exe`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.1/codex-feishu-notify-windows-v0.6.1-setup.exe) | [`setup.exe.sha256`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.1/codex-feishu-notify-windows-v0.6.1-setup.exe.sha256) | [`ZIP`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.6.1/codex-feishu-notify-windows-v0.6.1.zip) |
+| [`v0.7.0`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.7.0) | [`setup.exe`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.7.0/codex-feishu-notify-windows-v0.7.0-setup.exe) | [`setup.exe.sha256`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.7.0/codex-feishu-notify-windows-v0.7.0-setup.exe.sha256) | [`ZIP`](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/download/v0.7.0/codex-feishu-notify-windows-v0.7.0.zip) |
 
 后续版本请以 [Releases / Latest](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 为准。Release 同时提供 setup EXE、便携 ZIP 和各自的 SHA-256 文件。
 
@@ -83,7 +85,7 @@ flowchart LR
     F --> G[飞书目标会话]
 ```
 
-`notify.ps1` 在时间窗外仍可入队；普通日的队列项会等到下一次计划投递。日历中的法定节假日由日期触发器补齐日间缺口；用户勾选的固定星期由每周触发器补齐同一缺口，因此这些日期全天每分钟检查队列。超过 `max_queue_age_hours` 的项目会进入 `spool/expired`，不会继续发送。
+0.7.0 新安装默认只接收时段内的新事件，时间窗外不入飞书队列；旧安装未显式开启 `delivery.fresh_notifications_only` 时保留原有跨时段排队语义。日历中的法定节假日由日期触发器补齐日间缺口；用户勾选的固定星期由每周触发器补齐同一缺口，因此这些日期全天每分钟检查队列。新状态模式下，旧时段和未标记的历史项移入 `spool/suppressed`；其余超过 `max_queue_age_hours` 的项目进入 `spool/expired`，不会继续发送。
 
 安装前已经打开的 Codex 会话没有 `SessionStart` 就绪标记，会暂时沿用原完成通知；重新开启 Codex 后，新会话自动进入严格两阶段完成门。
 
@@ -113,15 +115,15 @@ flowchart LR
 ## 一键安装（推荐）
 
 1. 先完成上面的飞书连接器、`lark-cli` profile 和目标会话 ID 准备。
-2. 从 [v0.6.1 Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.6.1) 下载 `codex-feishu-notify-windows-v0.6.1-setup.exe` 和同名 `.sha256` 文件；更新版本请改用 [Latest Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 中对应的两个文件。
+2. 从 [v0.7.0 Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/tag/v0.7.0) 下载 `codex-feishu-notify-windows-v0.7.0-setup.exe` 和同名 `.sha256` 文件；更新版本请改用 [Latest Release](https://github.com/xp90211-pixel/codex-feishu-notify-windows/releases/latest) 中对应的两个文件。
 3. 在 PowerShell 中核对安装器哈希：
 
    ```powershell
-   (Get-FileHash .\codex-feishu-notify-windows-v0.6.1-setup.exe -Algorithm SHA256).Hash
-   Get-Content .\codex-feishu-notify-windows-v0.6.1-setup.exe.sha256
+   (Get-FileHash .\codex-feishu-notify-windows-v0.7.0-setup.exe -Algorithm SHA256).Hash
+   Get-Content .\codex-feishu-notify-windows-v0.7.0-setup.exe.sha256
    ```
 
-4. 两边哈希一致后双击安装器。它不要求管理员权限，会把管理程序安装到 `%LOCALAPPDATA%\Programs\CodexFeishuNotify\v0.6.1`，创建开始菜单快捷方式并自动打开“Codex 飞书通知设置”。
+4. 两边哈希一致后双击安装器。它不要求管理员权限，会把管理程序安装到 `%LOCALAPPDATA%\Programs\CodexFeishuNotify\v0.7.0`，创建开始菜单快捷方式并自动打开“Codex 飞书通知设置”。
 5. 在图形设置器中填写飞书会话 ID，核对自动找到的 `lark-cli` 与 profile，设置运行计划，然后点击“安装通知”并确认变更。
 6. 安装完成后重新打开 Codex，在 Hook 管理界面审查、信任并启用本项目安装或更新的 Hook。
 
@@ -240,7 +242,7 @@ powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass `
 
 启动设置器只读取配置。两个入口各司其职：
 
-- “保存设置”：只更新私有设置；仅时间规则或计划启用状态变化时重建任务，不部署脚本、不改写 Codex Hook，无需重新信任。旧运行时请先升级到 v0.6.1。
+- “保存设置”：只更新私有设置；仅时间规则或计划启用状态变化时重建任务，不部署脚本、不改写 Codex Hook，无需重新信任。使用本分支的 0.7.0 设置器时，旧运行时请先通过“安装通知”升级。
 - “安装通知”：首次部署、升级或修复；备份并部署运行文件、合并 Hook、更新根级 notify 和计划任务。完成后重新打开 Codex，审查并信任变化的 Hook。
 - “发送测试通知”：确认后才向**已保存配置**指定的会话发送一条固定测试文本，不含任务内容；仍遵循通知总开关和运行时段。
 - 首页说明当前为何未投递；状态页显示下一次允许发送、最近实际发送时间、飞书 message ID 和有效状态计数。
@@ -295,6 +297,7 @@ v0.6.1 将本机验证过的修补纳入标准安装和升级。`notification-ho
 | `transport.retry_delay_seconds` | `2` | 同一轮尝试之间的等待秒数 |
 | `transport.timeout_seconds` | `30` | 单次 CLI 超时秒数，范围 1–120 |
 | `delivery.enabled` | `true` | 持久化运行计划总开关，直接运行 drain 也不能绕过 |
+| `delivery.fresh_notifications_only` | 新安装 `true` | 只发送当前投递时段的新事件；旧配置缺失时保持 `false` |
 | `delivery.suppressed_item_retention_days` | `7` | 已抑制队列保留天数 |
 | `filters.visible_threads_only` | `true` | 只保留桌面可见任务；不兼容时可关闭 |
 | `filters.skip_bridge_origin` | `true` | 跳过由飞书桥接发起的回合，避免回声 |

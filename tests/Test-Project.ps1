@@ -134,7 +134,7 @@ $sampleSettings = [pscustomobject]@{
 $cardPayload = Get-CfnDeliveryPayload $sampleQueueItem $sampleSettings
 $cardObject = $cardPayload.Content | ConvertFrom-Json
 Assert-True ($cardPayload.MessageType -eq 'interactive' -and $cardPayload.ContentFlag -eq '--content') 'Card mode must map to interactive content delivery.'
-Assert-True ($cardObject.header.title.content -eq 'Codex 任务完成') 'Completion cards must use the expected fixed title.'
+Assert-True ($cardObject.header.title.content -eq 'Codex 本轮回复完成') 'Completion cards must describe one response, not project completion.'
 
 $fakeKey = 'sk-' + ('x' * 24)
 $preview = Protect-CfnPreview "token=abc123456789 $fakeKey Bearer abc.def.ghi" 500
@@ -262,11 +262,13 @@ try {
     $expiredManualState = Get-CfnManualDeliveryState $tempIntegration -Now ([datetimeoffset]([datetime]'2026-08-27 18:41'))
     Assert-True ($null -eq $expiredManualState -and (Test-Path -LiteralPath (Get-CfnManualDeliveryStatePath $tempIntegration))) 'An expired manual override must return control to the saved schedule without read-side file mutation.'
     Copy-Item -LiteralPath (Join-Path $projectRoot 'src\CodexFeishuNotify.psm1') -Destination $tempIntegration
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'src\CfnIdleReminder.psm1') -Destination $tempIntegration
     Copy-Item -LiteralPath (Join-Path $projectRoot 'src\notify.ps1') -Destination $tempIntegration
     Copy-Item -LiteralPath (Join-Path $projectRoot 'src\hook.ps1') -Destination $tempIntegration
     Copy-Item -LiteralPath (Join-Path $projectRoot 'src\drain.ps1') -Destination $tempIntegration
     $testSettings = $example | ConvertTo-Json -Depth 5 | ConvertFrom-Json
     $testSettings.filters.visible_threads_only = $false
+    $testSettings.delivery.fresh_notifications_only = $false # Retain legacy lifecycle fixture expectations.
     $testSettings.desktop.enabled = $false
     $testSettings.delivery.all_day_weekdays = @('Sunday', 'Monday', 'Sunday')
     [System.IO.File]::WriteAllText(
