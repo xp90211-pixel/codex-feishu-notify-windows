@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string] $InstallRoot = '',
     [string] $TaskName = 'Codex.FeishuNotify'
@@ -54,6 +54,10 @@ if (Test-Path -LiteralPath $modulePath) {
         if ($null -ne $weekdayProperty) { $allDayWeekdays = @($weekdayProperty.Value) }
         Add-Check 'settings_valid' $true 'settings.local.json parsed'
         Add-Check 'feishu_notifications' $true "enabled=$($settings.FeishuEnabled)"
+        Add-Check 'fresh_notifications_only' $true "enabled=$($settings.FreshNotificationsOnly)"
+        Import-Module (Join-Path $InstallRoot 'CfnIdleReminder.psm1') -Force -DisableNameChecking
+        $idleOptions = Get-CfnIdleOptions $InstallRoot
+        Add-Check 'all_idle_reminder' $true "enabled=$($null -ne $idleOptions); live app status not probed"
         Add-Check 'message_format' ($settings.MessageFormat -in @('card', 'text')) $settings.MessageFormat
         Add-Check 'strict_completion_gate' $true "enabled=$($settings.StrictCompletionGate)"
         Add-Check 'desktop_foreground_policy' $true "enabled=$($settings.DesktopEnabled), only_when_background=$($settings.DesktopOnlyWhenCodexBackground)"
@@ -96,7 +100,7 @@ if (Test-Path -LiteralPath $modulePath) {
     }
 }
 
-foreach ($name in @('notify.ps1', 'hook.ps1', 'drain.ps1', 'dispatch.ps1', 'CodexFeishuNotify.psm1')) {
+foreach ($name in @('notify.ps1', 'hook.ps1', 'drain.ps1', 'dispatch.ps1', 'CodexFeishuNotify.psm1', 'CfnIdleReminder.psm1')) {
     $path = Join-Path $InstallRoot $name
     if (-not (Test-Path -LiteralPath $path)) {
         Add-Check "syntax_$name" $false 'file missing'

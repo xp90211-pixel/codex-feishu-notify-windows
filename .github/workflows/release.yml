@@ -64,6 +64,18 @@ jobs:
         shell: pwsh
         run: ./tests/Test-OneClickInstaller.ps1 -Version 0.0.0-release-ci
 
+      - name: Fresh-only and all-idle notifications on PowerShell 7
+        shell: pwsh
+        run: |
+          ./tests/Test-FreshNotifications.ps1
+          ./tests/Test-AllIdleReminder.ps1
+
+      - name: Fresh-only and all-idle notifications on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          ./tests/Test-FreshNotifications.ps1
+          ./tests/Test-AllIdleReminder.ps1
+
       - name: Build release assets
         shell: pwsh
         run: ./scripts/New-OneClickInstaller.ps1 -Version '${{ steps.version.outputs.version }}'

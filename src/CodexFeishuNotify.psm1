@@ -156,6 +156,7 @@ function Get-CfnSettings {
         ReadyStateTtlHours = [int](Get-CfnProperty $lifecycle 'ready_state_ttl_hours' 720)
         ScheduleStart = [string](Get-CfnProperty $delivery 'start' '18:40')
         ScheduleEnabled = [bool](Get-CfnProperty $delivery 'enabled' $true)
+        FreshNotificationsOnly = [bool](Get-CfnProperty $delivery 'fresh_notifications_only' $false)
         ScheduleEnd = [string](Get-CfnProperty $delivery 'end' '02:00')
         IntervalMinutes = [int](Get-CfnProperty $delivery 'interval_minutes' 1)
         HolidayRegion = [string](Get-CfnProperty $delivery 'holiday_region' 'None')
@@ -943,6 +944,119 @@ function Get-CfnDeliveryControlState {
     }
 }
 
+function Get-CfnFreshDeliveryWindow {
+    param([string] $IntegrationRoot, $Settings, [datetime] $Now = (Get-Date))
+    $control = Get-CfnDeliveryControlState $IntegrationRoot $Settings $Now
+    if (-not $Settings.FeishuEnabled -or -not $control.EffectiveActive) { return $null }
+    $manual = Get-CfnManualDeliveryState $IntegrationRoot -Now ([datetimeoffset]$Now)
+    if ($null -ne $manual -and $manual.Mode -eq 'force') {
+        return [pscustomobject]@{ Start = $manual.CreatedAt; End = $manual.ExpiresAt }
+    }
+    if (Test-CfnAllDayDate $Settings $Now.Date) {
+        $start = $Now.Date; $end = $start.AddDays(1)
+    } else {
+        $window = Get-CfnScheduleWindow $Settings.ScheduleStart $Settings.ScheduleEnd
+        $start = $Now.Date.Add($window.StartTime)
+        if ($start -gt $Now) { $start = $start.AddDays(-1) }
+        $end = $start.Add($window.Duration)
+    }
+    return [pscustomobject]@{ Start = [datetimeoffset]$start; End = [datetimeoffset]$end }
+}
+
+function Set-CfnQueueDeliveryWindow {
+    param([string] $IntegrationRoot, $Settings, $QueueItem, [datetime] $Now = (Get-Date))
+    if (-not [bool](Get-CfnProperty $Settings 'FreshNotificationsOnly' $false)) { return $true }
+    $window = Get-CfnFreshDeliveryWindow $IntegrationRoot $Settings $Now
+    if ($null -eq $window) { return $false }
+    $created = [datetimeoffset]::Parse([string]$QueueItem.created_at)
+    if ($created -lt $window.Start -or $created -ge $window.End -or $created -gt [datetimeoffset]$Now) { return $false }
+    $fields = @{
+        delivery_window_start = $window.Start.ToUniversalTime().ToString('o')
+        delivery_window_end = $window.End.ToUniversalTime().ToString('o')
+    }
+    foreach ($name in $fields.Keys) {
+        if ($QueueItem -is [Collections.IDictionary]) { $QueueItem[$name] = $fields[$name] }
+        else { $QueueItem | Add-Member NoteProperty $name $fields[$name] -Force }
+    }
+    return $true
+}
+
+function Get-CfnFreshActivityPath {
+    param([string] $IntegrationRoot, [string] $ThreadId)
+    return Join-Path $IntegrationRoot ('spool\state\fresh-activity\' + (Get-CfnEventId $ThreadId) + '.json')
+}
+
+function Get-CfnQueueFreshness {
+    param([string] $IntegrationRoot, $Settings, $QueueItem, [datetime] $Now = (Get-Date))
+    if (-not [bool](Get-CfnProperty $Settings 'FreshNotificationsOnly' $false)) { return 'eligible' }
+    $window = Get-CfnFreshDeliveryWindow $IntegrationRoot $Settings $Now
+    if ($null -eq $window) { return 'outside_delivery_window' }
+    $created = [datetimeoffset]::Parse([string]$QueueItem.created_at)
+    if ($created -lt $window.Start -or $created -ge $window.End) { return 'historical_window' }
+    if ($created -gt [datetimeoffset]$Now) { return 'future_timestamp' }
+    $startText = [string](Get-CfnProperty $QueueItem 'delivery_window_start' '')
+    $endText = [string](Get-CfnProperty $QueueItem 'delivery_window_end' '')
+    if (-not $startText -or -not $endText) { return 'legacy_unstamped' }
+    $stampedStart = [datetimeoffset]::Parse($startText)
+    $stampedEnd = [datetimeoffset]::Parse($endText)
+    if ($stampedStart -ne $window.Start -or $created -lt $stampedStart -or $created -ge $stampedEnd -or
+        [datetimeoffset]$Now -ge $stampedEnd) { return 'historical_window' }
+    if ([string](Get-CfnProperty $QueueItem 'kind' '') -eq 'completed') {
+        $threadId = [string](Get-CfnProperty $QueueItem 'thread_id' '')
+        if ($threadId) {
+            $path = Get-CfnFreshActivityPath $IntegrationRoot $threadId
+            if (Test-Path -LiteralPath $path) {
+                $activity = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($activity.phase -eq 'running' -or
+                    ($activity.event_id -and $activity.event_id -cne [string]$QueueItem.event_id)) { return 'superseded_by_new_activity' }
+            }
+        }
+    }
+    return 'eligible'
+}
+
+function Move-CfnStaleQueueItem {
+    param([string] $IntegrationRoot, [string] $Path, [string] $Reason)
+    $root = [IO.Path]::GetFullPath($IntegrationRoot).TrimEnd('\', '/')
+    $pending = [IO.Path]::GetFullPath((Join-Path $root 'spool\pending')).TrimEnd('\') + '\'
+    $source = [IO.Path]::GetFullPath($Path)
+    if (-not $source.StartsWith($pending, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetDirectoryName($source) -ine $pending.TrimEnd('\')) { throw 'Queue item is outside the pending directory.' }
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { return $false }
+    $targetRoot = [IO.Path]::GetFullPath((Join-Path $root 'spool\suppressed'))
+    if (-not $targetRoot.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid suppression directory.' }
+    Ensure-CfnDirectory $targetRoot
+    $target = Join-Path $targetRoot ([datetimeoffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ') + '-' + [guid]::NewGuid().ToString('N') + '-' + [IO.Path]::GetFileName($source))
+    Move-Item -LiteralPath $source -Destination $target -ErrorAction Stop
+    Write-CfnLog $IntegrationRoot 'queue' 'stale_suppressed' ([IO.Path]::GetFileNameWithoutExtension($source)) $Reason
+    return $true
+}
+
+function Set-CfnFreshThreadActivity {
+    param([string] $IntegrationRoot, $Settings, [string] $ThreadId, [string] $TurnId,
+        [ValidateSet('running','completed')] [string] $Phase, [string] $EventId = '')
+    if (-not [bool](Get-CfnProperty $Settings 'FreshNotificationsOnly' $false) -or -not $ThreadId) { return $true }
+    # Called under the existing lifecycle state mutex, also held during the
+    # transport's final submission check. A new turn invalidates unsent completions.
+    $path = Get-CfnFreshActivityPath $IntegrationRoot $ThreadId
+    if ($Phase -eq 'completed' -and (Test-Path -LiteralPath $path)) {
+        $previous = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($previous.phase -eq 'running' -and $previous.turn_id -and $TurnId -and $previous.turn_id -cne $TurnId) { return $false }
+    }
+    Write-CfnJsonAtomic $path @{ thread_id = $ThreadId; turn_id = $TurnId; phase = $Phase; event_id = $EventId; changed_at = [datetimeoffset]::UtcNow.ToString('o') }
+    foreach ($file in @(Get-ChildItem -LiteralPath (Join-Path $IntegrationRoot 'spool\pending') -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        try {
+            $item = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string](Get-CfnProperty $item 'kind' '') -eq 'completed' -and
+                [string](Get-CfnProperty $item 'thread_id' '') -ceq $ThreadId -and
+                [string](Get-CfnProperty $item 'event_id' '') -cne $EventId) {
+                [void](Move-CfnStaleQueueItem $IntegrationRoot $file.FullName 'superseded_by_new_activity')
+            }
+        } catch { Write-CfnLog $IntegrationRoot 'queue' 'stale_check_failed' $file.BaseName }
+    }
+    return $true
+}
+
 function Find-CfnLarkCli {
     param([AllowEmptyString()] [string] $ExplicitPath = '')
 
@@ -1002,7 +1116,7 @@ function New-CfnMessage {
     $title = if ($kind -eq 'needs-input') {
         ([string]::Concat([char]::ConvertFromUtf32(0x1F7E0), ' Codex 等待授权'))
     } else {
-        ([string]::Concat([char]0x2705, ' Codex 任务完成'))
+        ([string]::Concat([char]0x2705, ' Codex 本轮回复完成'))
     }
     $lines = @(
         $title,
@@ -1026,7 +1140,7 @@ function New-CfnCardContent {
     )
 
     $kind = [string](Get-CfnProperty $QueueItem 'kind' 'completed')
-    $title = if ($kind -eq 'needs-input') { 'Codex 等待授权' } else { 'Codex 任务完成' }
+    $title = if ($kind -eq 'needs-input') { 'Codex 等待授权' } else { 'Codex 本轮回复完成' }
     $template = if ($kind -eq 'needs-input') { 'orange' } else { 'green' }
     $lines = New-Object System.Collections.Generic.List[string]
     $lines.Add(('**工作区：** {0}' -f (Protect-CfnPreview ([string](Get-CfnProperty $QueueItem 'project' 'Unknown workspace')) 100)))
@@ -1057,7 +1171,7 @@ function New-CfnCardContent {
             },
             [ordered]@{
                 tag = 'note'
-                elements = @([ordered]@{ tag = 'plain_text'; content = "本机时间：$localTime" })
+                elements = @([ordered]@{ tag = 'plain_text'; content = "事件时间：$localTime" })
             }
         )
     }
@@ -1295,6 +1409,9 @@ function Invoke-CfnTransport {
             if ($null -ne $QueueItem -and -not (Test-CfnWaitingItemActive $IntegrationRoot $QueueItem $current.WaitingStateTtlHours)) {
                 return [pscustomobject]@{ ExitCode = -2; Stdout = ''; Stderr = ''; Skipped = $true; TimedOut = $false }
             }
+            if ($null -ne $QueueItem -and (Get-CfnQueueFreshness $IntegrationRoot $current $QueueItem) -ne 'eligible') {
+                return [pscustomobject]@{ ExitCode = -2; Stdout = ''; Stderr = ''; Skipped = $true; TimedOut = $false }
+            }
             if ($current.ChatId -cne $Settings.ChatId -or $current.LarkChannelProfile -cne $Settings.LarkChannelProfile -or
                 $current.LarkChannelHome -cne $Settings.LarkChannelHome -or $current.RequireLarkProfile -ne $Settings.RequireLarkProfile -or
                 $current.IncludeTaskPreview -ne $Settings.IncludeTaskPreview -or $current.IncludeResultPreview -ne $Settings.IncludeResultPreview -or
@@ -1347,7 +1464,8 @@ function Invoke-CfnRetention {
         @('spool\state\resolved', '*.json', $Settings.WaitingStateTtlHours),
         @('spool\state\completion', '*.json', ($Settings.CompletionArmTtlMinutes / 60.0)),
         @('spool\state\ready', '*.json', $Settings.ReadyStateTtlHours),
-        @('spool\state\generations', '*.json', $Settings.WaitingStateTtlHours)
+        @('spool\state\generations', '*.json', $Settings.WaitingStateTtlHours),
+        @('spool\state\fresh-activity', '*.json', $Settings.ReadyStateTtlHours)
     )) {
         $cutoff = [datetime]::UtcNow.AddHours(-[double]$entry[2])
         Get-ChildItem -LiteralPath (Join-Path $IntegrationRoot $entry[0]) -File -Filter $entry[1] -ErrorAction SilentlyContinue |
@@ -1357,6 +1475,7 @@ function Invoke-CfnRetention {
 }
 
 Export-ModuleMember -Function @(
+    'Get-CfnFreshDeliveryWindow', 'Set-CfnQueueDeliveryWindow', 'Get-CfnQueueFreshness', 'Move-CfnStaleQueueItem', 'Set-CfnFreshThreadActivity',
     'Get-CfnRequestIdentity', 'New-CfnPermissionEventId', 'Test-CfnWaitingItemActive',
     'Get-CfnCodexHome', 'Enter-CfnMutex', 'Exit-CfnMutex', 'Set-CfnDeliveryEnabled',
     'ConvertTo-CfnNativeArgument', 'Resolve-CfnNativeCli', 'Invoke-CfnTransport', 'Update-CfnDeliveryResult', 'Invoke-CfnRetention',

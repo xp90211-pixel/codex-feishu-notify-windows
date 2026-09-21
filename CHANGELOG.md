@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0 — Unreleased
+
+- Add opt-in, once-per-window Feishu reminders when all local Codex tasks stop running or need input, using bounded read-only app status checks and persistent confirmation state.
+- Add fresh-only delivery windows, stale-queue quarantine, per-thread completion coalescing, and atomic freshness checks before transport. Enabled for new installs; upgrades preserve existing choices.
+- Label completion as one response and display event time, without changing desktop notification policy.
+- Package the new module, preserve reminder settings through upgrades/rollback, and add offline PowerShell 7 / 5.1 coverage to CI and release validation.
+
 ## 0.6.1 — 2026-09-14
 
 - Include the no-console notification host as auditable source and compile it offline with the Windows .NET Framework compiler during installation.

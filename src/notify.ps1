@@ -95,8 +95,18 @@ try {
         return
     }
 
-    # Eligible Feishu notifications intentionally do not follow the desktop
-    # foreground notification mode. Delivery timing belongs to the task only.
+    if (-not (Set-CfnQueueDeliveryWindow $IntegrationRoot $settings $queueItem)) {
+        # Feishu scheduling does not disable the independent desktop channel.
+        [void](Show-CfnDesktopEvent $IntegrationRoot $settings 'completed' $desktopBody $eventId)
+        Write-CfnLog $IntegrationRoot 'enqueue' 'outside_window_skipped' $eventId
+        return
+    }
+    if (-not (Set-CfnFreshThreadActivity $IntegrationRoot $settings $threadId $turnId 'completed' $eventId)) {
+        Write-CfnLog $IntegrationRoot 'enqueue' 'superseded_completion_skipped' $eventId
+        return
+    }
+
+    # Only eligible current-window events enter the queue in fresh-only mode.
     $spoolRoot = Join-Path $IntegrationRoot 'spool'
     $pendingRoot = Join-Path $spoolRoot 'pending'
     $sentRoot = Join-Path $spoolRoot 'sent'
@@ -115,8 +125,8 @@ try {
 
     [void](Show-CfnDesktopEvent $IntegrationRoot $settings 'completed' $desktopBody $eventId)
 
-    # Do not call Start-ScheduledTask here. Items wait for the registered daily
-    # window or a date-specific public-holiday extension.
+    # Do not call Start-ScheduledTask here. Current-window items wait for the
+    # existing no-console worker; fresh-only events never wait for a later window.
     Write-CfnLog $IntegrationRoot 'trigger' 'scheduled_only' $eventId
 } catch {
     Write-CfnLog $IntegrationRoot 'enqueue' 'exception' '' $_.Exception.Message

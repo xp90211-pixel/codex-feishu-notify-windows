@@ -1,4 +1,4 @@
-[CmdletBinding(SupportsShouldProcess = $true)]
+﻿[CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string] $ChatId = '',
     [string] $InstallRoot = '',
@@ -16,6 +16,8 @@ param(
     [switch] $NoLarkProfile,
     [switch] $NoFeishuNotifications,
     [switch] $DisableScheduledTask,
+    [switch] $FreshNotificationsOnly = $true,
+    [switch] $AllIdleReminder,
     [switch] $AllThreads,
     [switch] $IncludeBridgeOrigin,
     [switch] $NoTaskPreview,
@@ -208,6 +210,7 @@ $parameterProperties = @{
     LarkCliPath = 'LarkCliPath'; LarkChannelHome = 'LarkChannelHome'; LarkChannelProfile = 'LarkChannelProfile'
     MessageFormat = 'MessageFormat'; SendAttemptsPerRun = 'SendAttemptsPerRun'; RetryDelaySeconds = 'RetryDelaySeconds'
     IncludePermissionTool = 'IncludePermissionTool'
+    FreshNotificationsOnly = 'FreshNotificationsOnly'
 }
 $negativeProperties = @{
     NoLarkProfile = 'RequireLarkProfile'; NoFeishuNotifications = 'FeishuEnabled'; DisableScheduledTask = 'ScheduleEnabled'
@@ -238,6 +241,15 @@ if ($null -ne $existingResolved) {
 if ($PSBoundParameters.ContainsKey('IncludeTaskPreview')) { $NoTaskPreview = -not $IncludeTaskPreview }
 if ($PSBoundParameters.ContainsKey('IncludeResultPreview')) { $NoResultPreview = -not $IncludeResultPreview }
 if ($ClearAllDayWeekdays) { $AllDayWeekdays = @() }
+$idleSettingsPath = Join-Path $InstallRoot 'idle-reminder.settings.json'
+$idleSettingsText = if (Test-Path -LiteralPath $idleSettingsPath) { Read-CfnUtf8File $idleSettingsPath } else { '' }
+$idleSettings = if ($idleSettingsText) { $idleSettingsText | ConvertFrom-Json } else {
+    [pscustomobject]@{ schema = 1; enabled = $false; channel = 'feishu'; confirm_seconds = 5 }
+}
+if ($PSBoundParameters.ContainsKey('AllIdleReminder')) { $idleSettings.enabled = [bool]$AllIdleReminder }
+if ($idleSettings.channel -ne 'feishu' -or [int]$idleSettings.confirm_seconds -lt 1 -or [int]$idleSettings.confirm_seconds -gt 15) {
+    throw 'Invalid all-idle reminder settings; no files were changed.'
+}
 $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($existingTask -and -not (Test-CfnTaskOwnership $existingTask $InstallRoot)) {
     throw 'The selected task belongs to another program or installation. Nothing was changed.'
@@ -246,8 +258,8 @@ if (-not $PSBoundParameters.ContainsKey('DisableScheduledTask') -and $existingTa
     $DisableScheduledTask = ([string]$existingTask.State -eq 'Disabled')
 }
 if ($SettingsOnly) {
-    if ($null -eq $priorState -or -not $existingTask -or (Get-CfnProperty $priorState 'version' '') -ne '0.6.1') {
-        throw 'Install or upgrade the notification runtime first with Install Notification; settings-only saving requires v0.6.1.'
+    if ($null -eq $priorState -or -not $existingTask -or (Get-CfnProperty $priorState 'version' '') -ne '0.7.0') {
+        throw 'Install or upgrade the notification runtime first with Install Notification; settings-only saving requires v0.7.0.'
     }
     $SkipCodexHook = $true
     $SkipLifecycleHooks = $true
@@ -432,7 +444,7 @@ $hooksExisted = Test-Path -LiteralPath $hooksPath
 if ($PSCmdlet.ShouldProcess($InstallRoot, 'Install or save Codex-to-Feishu notifier')) {
     Ensure-CfnDirectory $InstallRoot
     Ensure-CfnDirectory $backupRoot
-    $managedNames = @('CodexFeishuNotify.psm1', 'notify.ps1', 'hook.ps1', 'drain.ps1', 'dispatch.ps1', 'notification-host.cs', 'notification-host.exe', 'settings.local.json', 'holidays.local.json', 'previous-notify.json', 'install-state.json', 'spool\state\runtime-control.json', 'spool\state\manual-delivery.json')
+    $managedNames = @('CodexFeishuNotify.psm1', 'CfnIdleReminder.psm1', 'idle-reminder.settings.json', 'notify.ps1', 'hook.ps1', 'drain.ps1', 'dispatch.ps1', 'notification-host.cs', 'notification-host.exe', 'settings.local.json', 'holidays.local.json', 'previous-notify.json', 'install-state.json', 'spool\state\runtime-control.json', 'spool\state\manual-delivery.json')
     $existingManaged = @($managedNames | Where-Object { Test-Path -LiteralPath (Join-Path $InstallRoot $_) -PathType Leaf })
     if ($existingManaged.Count -gt 0) {
         $deploymentBackup = Join-Path $backupRoot "deployment-$stamp"
@@ -447,7 +459,7 @@ if ($PSCmdlet.ShouldProcess($InstallRoot, 'Install or save Codex-to-Feishu notif
     # Preflight used snapshots. If another settings/control operation won the
     # race, refuse this stale deployment rather than overwriting its changes.
     try {
-        foreach ($entry in @(@($configPath, $configText), @($hooksPath, $hooksText), @($existingSettingsPath, $existingSettingsText))) {
+        foreach ($entry in @(@($configPath, $configText), @($hooksPath, $hooksText), @($existingSettingsPath, $existingSettingsText), @($idleSettingsPath, $idleSettingsText))) {
             $currentText = if (Test-Path -LiteralPath $entry[0]) { Read-CfnUtf8File $entry[0] } else { '' }
             if ($currentText -cne $entry[1]) { throw 'Configuration changed during preflight; retry. Nothing was overwritten.' }
         }
@@ -464,7 +476,7 @@ if ($PSCmdlet.ShouldProcess($InstallRoot, 'Install or save Codex-to-Feishu notif
     $hooksTouched = $false
     try {
     if (-not $SettingsOnly) {
-    foreach ($name in @('CodexFeishuNotify.psm1', 'notify.ps1', 'hook.ps1', 'drain.ps1', 'dispatch.ps1', 'notification-host.cs')) {
+    foreach ($name in @('CodexFeishuNotify.psm1', 'CfnIdleReminder.psm1', 'notify.ps1', 'hook.ps1', 'drain.ps1', 'dispatch.ps1', 'notification-host.cs')) {
         Copy-Item -LiteralPath (Join-Path $sourceRoot $name) -Destination (Join-Path $InstallRoot $name) -Force
     }
     New-CfnNotificationHost -SourcePath (Join-Path $InstallRoot 'notification-host.cs') -OutputPath (Join-Path $InstallRoot 'notification-host.exe')
@@ -490,6 +502,7 @@ if ($PSCmdlet.ShouldProcess($InstallRoot, 'Install or save Codex-to-Feishu notif
         }
         delivery = [ordered]@{
             enabled = (-not $DisableScheduledTask)
+            fresh_notifications_only = [bool]$FreshNotificationsOnly
             start = $ScheduleStart
             end = $ScheduleEnd
             interval_minutes = $IntervalMinutes
@@ -533,7 +546,7 @@ if ($PSCmdlet.ShouldProcess($InstallRoot, 'Install or save Codex-to-Feishu notif
                 $settingsObject.$section | Add-Member NoteProperty $p.Name $p.Value -Force
             }
         }
-        foreach ($name in @('enabled', 'start', 'end', 'interval_minutes', 'holiday_region', 'holiday_calendar', 'all_day_weekdays', 'max_queue_age_hours')) {
+        foreach ($name in @('enabled', 'fresh_notifications_only', 'start', 'end', 'interval_minutes', 'holiday_region', 'holiday_calendar', 'all_day_weekdays', 'max_queue_age_hours')) {
             $settingsObject.delivery | Add-Member NoteProperty $name $generated.delivery.$name -Force
         }
         foreach ($name in @('strict_completion_gate', 'notify_permission_requests')) {
@@ -543,6 +556,7 @@ if ($PSCmdlet.ShouldProcess($InstallRoot, 'Install or save Codex-to-Feishu notif
 
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     Write-CfnJsonAtomic $existingSettingsPath $settingsObject
+    Write-CfnJsonAtomic $idleSettingsPath $idleSettings
     [void](Get-CfnSettings $InstallRoot)
     $suppressedCount = 0
 
@@ -640,7 +654,7 @@ if ($PSCmdlet.ShouldProcess($InstallRoot, 'Install or save Codex-to-Feishu notif
     $stateTaskBackup = if ($isUpgrade -and $priorTaskBackup) { $priorTaskBackup } else { $taskBackup }
     $state = [ordered]@{
         schema = 2
-        version = '0.6.1'
+        version = '0.7.0'
         installed_at = (Get-Date).ToUniversalTime().ToString('o')
         install_root = $InstallRoot
         task_name = $TaskName

@@ -40,6 +40,11 @@ try {
     Import-Module (Join-Path $projectRoot 'src\CodexFeishuNotify.Management.psm1') -Force -DisableNameChecking
     $settingsPath = Join-Path $installRoot 'settings.local.json'
     $settings = Get-CfnSettings $installRoot
+    $idlePath = Join-Path $installRoot 'idle-reminder.settings.json'
+    $idleModulePath = Join-Path $installRoot 'CfnIdleReminder.psm1'
+    Assert-Install ($settings.FreshNotificationsOnly -and (Test-Path -LiteralPath $idleModulePath)) 'New installation did not deploy fresh-only support.'
+    $idle = Read-CfnUtf8File $idlePath | ConvertFrom-Json
+    Assert-Install (-not $idle.enabled -and $idle.confirm_seconds -eq 5) 'Aggregate app-status monitoring must be opt-in.'
     Assert-Install (-not $settings.IncludeTaskPreview -and -not $settings.IncludeResultPreview -and -not $settings.FeishuEnabled) 'Installation privacy or channel defaults incorrect.'
     $parsed = ConvertFrom-CfnToml (Read-CfnUtf8File $configPath)
     Assert-Install ($parsed.HasKey('notify') -and -not $parsed['features'].HasKey('notify')) 'Installed notify is not at root.'
@@ -51,6 +56,10 @@ try {
     $raw = Read-CfnUtf8File $settingsPath | ConvertFrom-Json
     $raw.transport.timeout_seconds = 11
     $raw.delivery.sent_marker_retention_days = 17
+    $raw.delivery.fresh_notifications_only = $false
+    $idle.enabled = $true
+    $idle.confirm_seconds = 3
+    Write-CfnJsonAtomic $idlePath $idle
     $raw | Add-Member NoteProperty custom_metadata ([pscustomobject]@{ keep = '保留' })
     Write-CfnJsonAtomic $settingsPath $raw
     $taskBefore = Export-ScheduledTask -TaskName $testName
@@ -59,6 +68,8 @@ try {
     & $installer -InstallRoot $installRoot -SettingsOnly -NoDesktopToast:$false -Confirm:$false
     $raw = Read-CfnUtf8File $settingsPath | ConvertFrom-Json
     Assert-Install ($raw.transport.timeout_seconds -eq 11 -and $raw.delivery.sent_marker_retention_days -eq 17 -and $raw.custom_metadata.keep -eq '保留') 'Saving reset unspecified configuration.'
+    Assert-Install (-not $raw.delivery.fresh_notifications_only -and (Read-CfnUtf8File $idlePath | ConvertFrom-Json).enabled -and
+        (Read-CfnUtf8File $idlePath | ConvertFrom-Json).confirm_seconds -eq 3) 'Saving unrelated settings lost notification choices.'
     Assert-Install ((Export-ScheduledTask -TaskName $testName) -ceq $taskBefore) 'Saving an unrelated setting changed task XML.'
     Assert-Install ((Get-FileHash $configPath).Hash -eq $configHash -and (Get-FileHash $hooksPath).Hash -eq $hooksHash) 'Settings-only save rewrote Codex configuration or hooks.'
 
@@ -76,14 +87,17 @@ try {
     $hooksHash = (Get-FileHash $hooksPath).Hash
     $hostHash = (Get-FileHash (Join-Path $installRoot 'notification-host.exe')).Hash
     $settingsHash = (Get-FileHash $settingsPath).Hash
+    $idleHash = (Get-FileHash $idlePath).Hash
+    $idleModuleHash = (Get-FileHash $idleModulePath).Hash
     $global:CfnTestFailRegistration = $true
     $failed = $false
-    try { & $installer -InstallRoot $installRoot -ScheduleStart '19:00' -Confirm:$false } catch { $failed = $true }
+    try { & $installer -InstallRoot $installRoot -ScheduleStart '19:00' -AllIdleReminder:$false -FreshNotificationsOnly -Confirm:$false } catch { $failed = $true }
     Assert-Install $failed 'Injected deployment failure did not surface.'
     Assert-Install ((Get-FileHash $settingsPath).Hash -eq $settingsHash -and (Get-FileHash $configPath).Hash -eq $configHash -and (Get-FileHash $hooksPath).Hash -eq $hooksHash) 'Rollback did not restore exact configuration bytes.'
     Assert-Install ((Export-ScheduledTask -TaskName $testName) -ceq $taskBefore) 'Rollback did not restore task XML.'
     Assert-Install ((Get-FileHash (Join-Path $installRoot 'notification-host.exe')).Hash -ceq $hostHash) 'Rollback did not restore the exact host binary.'
     Assert-Install (-not (Get-CfnSettings $installRoot).ScheduleEnabled) 'Rollback re-enabled scheduled delivery.'
+    Assert-Install ((Get-FileHash $idlePath).Hash -ceq $idleHash -and (Get-FileHash $idleModulePath).Hash -ceq $idleModuleHash) 'Rollback changed the aggregate reminder module or preferences.'
 
     # A same-path installed custom calendar is valid; excessive calendars fail
     # before settings or task changes.
@@ -139,6 +153,8 @@ try {
     Assert-Install ((Get-ScheduledTask -TaskName $testName).Actions[0].Execute -ceq $hostPath) 'Saving a new schedule discarded the no-console launcher.'
     & (Get-Process -Id $PID).Path -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $projectRoot 'scripts\Test-Configuration.ps1') -InstallRoot $installRoot | Out-Null
     Assert-Install ($LASTEXITCODE -eq 0) 'Diagnostics rejected the no-console notification paths.'
+    & $installer -InstallRoot $installRoot -SettingsOnly -FreshNotificationsOnly -AllIdleReminder:$false -Confirm:$false
+    Assert-Install ((Get-CfnSettings $installRoot).FreshNotificationsOnly -and -not (Read-CfnUtf8File $idlePath | ConvertFrom-Json).enabled) 'Explicit notification switches were not saved.'
 
     $failed = $false
     try { & $uninstaller -InstallRoot $installRoot -TaskName 'Unrelated.Task' -Confirm:$false } catch { $failed = $true }
